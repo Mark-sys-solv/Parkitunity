@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, TypedDict
 
@@ -27,17 +27,6 @@ class Garage:
     free_spots: int | None = None
     hourly_rate_chf: float | None = None
     updated_at: datetime | None = None
-
-
-@dataclass
-class TransitConnection:
-    """One public-transport connection from transport.opendata.ch."""
-
-    departure: datetime
-    arrival: datetime
-    duration_min: float
-    transfers: int
-    products: list[str] = field(default_factory=list)  # e.g. ["S12", "T4"]
 
 
 class CarOption(TypedDict):

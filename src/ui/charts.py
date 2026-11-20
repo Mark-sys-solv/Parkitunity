@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -23,11 +24,14 @@ def render_mode_comparison(comparison: ModeComparison) -> None:
     """Show car vs. transit as metrics and a bar chart."""
     # TODO: nicer chart (altair/plotly), highlight recommended mode.
     car, transit = comparison["car"], comparison["transit"]
+    # Transit duration is inf when no connection was found.
+    transit_ok = math.isfinite(transit["duration_min"])
+    transit_label = f"{transit['duration_min']:.0f} min" if transit_ok else "n/a"
     col1, col2 = st.columns(2)
     col1.metric("🚗 Car + parking", f"{car['duration_min']:.0f} min", f"CHF {car['cost_chf']:.2f}", delta_color="off")
-    col2.metric("🚆 Public transport", f"{transit['duration_min']:.0f} min", f"CHF {transit['cost_chf']:.2f}", delta_color="off")
+    col2.metric("🚆 Public transport", transit_label, f"CHF {transit['cost_chf']:.2f}", delta_color="off")
     df = pd.DataFrame(
-        {"duration (min)": [car["duration_min"], transit["duration_min"]]},
+        {"duration (min)": [car["duration_min"], transit["duration_min"] if transit_ok else None]},
         index=["Car", "Transit"],
     )
     st.bar_chart(df)

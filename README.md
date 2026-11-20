@@ -17,16 +17,44 @@ cp .env.example .env               # adjust values if needed
 streamlit run app.py
 ```
 
-The app currently runs entirely on **dummy data** – no API keys needed.
+No API keys needed. Parking occupancy ([ParkenDD](https://api.parkendd.de/Zuerich)) and
+transit connections ([transport.opendata.ch](https://transport.opendata.ch)) are live; if the
+parking API is down, the app falls back to built-in dummy garages.
 
 ### Other commands
 
 ```bash
-pytest                                   # run interface tests
-python -m src.data.collector             # log garage occupancy once
-python -m src.data.collector --loop      # log every 10 minutes
+pytest                                   # run all tests offline (APIs are mocked)
+RUN_LIVE_TESTS=1 pytest -m live          # additionally check the real APIs
+python -m src.data.collector             # log garage occupancy once into SQLite
+python -m src.data.collector --loop      # log every 15 minutes
 python -m src.ml.train                   # train the occupancy model
 ```
+
+## Collected data
+
+A GitHub Actions workflow ([.github/workflows/collect.yml](.github/workflows/collect.yml)) logs the
+occupancy of all garages every 15 minutes. It appends to monthly CSV files
+(`data/occupancy/YYYY-MM.csv`) and commits them to the separate branch **`data`**, so `main`
+stays free of bot commits. Load the data into your local SQLite database like this:
+
+```bash
+git fetch origin data
+git restore --source origin/data --worktree -- data/occupancy   # copies the CSVs, stages nothing
+python -m src.data.collector --import-csv                       # -> data/parkitunity.db
+```
+
+`data/occupancy/` is git-ignored on `main`. Importing is idempotent, so you can repeat these
+steps anytime to get the latest data. The workflow can also be started manually from the
+**Actions** tab ("Run workflow").
+
+Things to know about GitHub Actions:
+
+- Scheduled runs often start a few minutes late.
+- They only run from the default branch, and GitHub disables them after 60 days without
+  repository activity.
+- On **private** repos every run counts as at least 1 billed minute (~2,900 min/month at 15-min
+  intervals; the free plan includes 2,000). Public repos are free.
 
 ## Project structure
 
@@ -53,8 +81,13 @@ docs/                   Documentation, reports
 | `predict(garage_id: str, arrival_time: datetime) -> int` | `src/ml/predict.py` | Predicted free spots |
 | `compare_modes(origin: str, destination: str, time: datetime) -> dict` | `src/recommendation/mode_compare.py` | `{"car": {...}, "transit": {...}, "recommendation": "car" \| "transit"}` |
 | `rank_garages(destination: Location, arrival_time: datetime) -> list[dict]` | `src/recommendation/parking_score.py` | Garages sorted by score |
-| `fetch_garages() -> list[Garage]` | `src/data/parking_api.py` | Current garage occupancy |
-| `get_connections(origin, destination, time) -> list[TransitConnection]` | `src/data/transit_api.py` | ÖV connections |
+| `fetch_occupancy() -> list[dict]` | `src/data/parking_api.py` | Raw occupancy per garage: `garage_id`, `name`, `free_spots`, `capacity`, `timestamp` (UTC), `lat`, `lon` |
+| `fetch_garages() -> list[Garage]` | `src/data/parking_api.py` | Garages for the app (cached 60 s, dummy fallback) |
+| `get_transit_options(origin, destination, departure_time) -> dict \| None` | `src/data/transit_api.py` | Best ÖV connection: `duration_min`, `transfers`, `departure`, `arrival`, `sections` (cached 5 min) |
+| `get_drive_time(origin, destination) -> float` | `src/data/routing.py` | Driving minutes (haversine estimate; pluggable provider) |
+| `load_history(garage_id=None, since=None) -> DataFrame` | `src/data/database.py` | Logged occupancy from SQLite |
+
+Places can be given as an address string, a `(lat, lon)` tuple or a `Location`.
 
 Changing one of these signatures? Tell the team and update `tests/test_interfaces.py`.
 

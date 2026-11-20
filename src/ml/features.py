@@ -22,7 +22,7 @@ def build_features(occupancy: pd.DataFrame, weather: pd.DataFrame | None = None)
     """Turn raw occupancy history into a training table.
 
     Args:
-        occupancy: Output of ``database.load_occupancy``.
+        occupancy: Output of ``database.load_history``.
         weather: Optional hourly weather, joined on the rounded timestamp.
 
     Returns:

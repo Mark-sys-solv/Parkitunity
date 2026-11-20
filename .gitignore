@@ -5,6 +5,8 @@
 data/raw/*
 !data/raw/.gitkeep
 *.db
+# Collected CSVs live on the "data" branch (see README)
+data/occupancy/
 
 # Python
 __pycache__/

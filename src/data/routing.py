@@ -1,16 +1,131 @@
-"""Geocoding, driving times and walking distances."""
+"""Geocoding, driving times and walking times.
+
+Driving times come from a pluggable ``RoutingProvider``. The default
+``HaversineProvider`` uses straight-line distance × road factor at an average
+city speed. To use a real routing API later:
+
+1. Write a class implementing ``drive_distance_km`` and ``drive_time_min``.
+2. Register it in ``_PROVIDERS`` below.
+3. Set ``PARKITUNITY_ROUTING_PROVIDER=<name>`` in ``.env``.
+
+If the configured provider fails, we log the error and fall back to the
+haversine estimate, so callers always get a number.
+"""
 
 from __future__ import annotations
 
+import logging
 import math
-from datetime import datetime
+from collections.abc import Callable
+from typing import Protocol
 
-from src.config import ZURICH_CENTER
+from src.config import (
+    AVG_CITY_SPEED_KMH,
+    ROAD_FACTOR,
+    ROUTING_PROVIDER,
+    WALKING_SPEED_KMH,
+    ZURICH_CENTER,
+)
 from src.models import Location
 
-ROAD_FACTOR: float = 1.4  # straight-line distance -> approx. road distance
-AVG_CITY_SPEED_KMH: float = 25.0
-WALKING_SPEED_KMH: float = 4.8
+logger = logging.getLogger(__name__)
+
+Coordinates = tuple[float, float]  # (lat, lon)
+Point = Location | Coordinates
+
+EARTH_RADIUS_KM = 6371.0
+WALKING_DETOUR_FACTOR = 1.2
+
+
+class RoutingProvider(Protocol):
+    """Interface every routing backend must implement."""
+
+    def drive_distance_km(self, origin: Coordinates, destination: Coordinates) -> float: ...
+
+    def drive_time_min(self, origin: Coordinates, destination: Coordinates) -> float: ...
+
+
+class HaversineProvider:
+    """Estimate driving from straight-line distance (no API, no traffic)."""
+
+    def __init__(self, road_factor: float = ROAD_FACTOR, speed_kmh: float = AVG_CITY_SPEED_KMH) -> None:
+        self.road_factor = road_factor
+        self.speed_kmh = speed_kmh
+
+    def drive_distance_km(self, origin: Coordinates, destination: Coordinates) -> float:
+        return haversine_km(origin, destination) * self.road_factor
+
+    def drive_time_min(self, origin: Coordinates, destination: Coordinates) -> float:
+        return self.drive_distance_km(origin, destination) / self.speed_kmh * 60
+
+
+# Name -> factory. Add real routing APIs here (e.g. "openrouteservice").
+_PROVIDERS: dict[str, Callable[[], RoutingProvider]] = {
+    "haversine": HaversineProvider,
+}
+_FALLBACK = HaversineProvider()
+_provider: RoutingProvider | None = None
+
+
+def get_provider() -> RoutingProvider:
+    """Return the configured routing provider (created on first use)."""
+    global _provider
+    if _provider is None:
+        factory = _PROVIDERS.get(ROUTING_PROVIDER)
+        if factory is None:
+            logger.warning("Unknown routing provider %r, using haversine", ROUTING_PROVIDER)
+            factory = HaversineProvider
+        _provider = factory()
+    return _provider
+
+
+def set_provider(provider: RoutingProvider | None) -> None:
+    """Override the routing provider (``None`` resets to the configured one)."""
+    global _provider
+    _provider = provider
+
+
+def get_drive_time(origin: Point, destination: Point) -> float:
+    """Estimated driving time in minutes.
+
+    Args:
+        origin: ``Location`` or (lat, lon).
+        destination: ``Location`` or (lat, lon).
+    """
+    a, b = _to_coords(origin), _to_coords(destination)
+    try:
+        return get_provider().drive_time_min(a, b)
+    except Exception:  # any provider failure -> estimate instead of crashing
+        logger.exception("Routing provider failed, falling back to haversine estimate")
+        return _FALLBACK.drive_time_min(a, b)
+
+
+def get_drive_distance_km(origin: Point, destination: Point) -> float:
+    """Estimated road distance in km (same provider/fallback as drive time)."""
+    a, b = _to_coords(origin), _to_coords(destination)
+    try:
+        return get_provider().drive_distance_km(a, b)
+    except Exception:
+        logger.exception("Routing provider failed, falling back to haversine estimate")
+        return _FALLBACK.drive_distance_km(a, b)
+
+
+def get_walking_time(origin: Point, destination: Point) -> float:
+    """Estimated walking time in minutes (e.g. garage -> destination)."""
+    # TODO: use routing API footpaths instead of straight line.
+    return haversine_km(origin, destination) * WALKING_DETOUR_FACTOR / WALKING_SPEED_KMH * 60
+
+
+def haversine_km(a: Point, b: Point) -> float:
+    """Straight-line (great-circle) distance between two points in km."""
+    (lat1, lon1), (lat2, lon2) = _to_coords(a), _to_coords(b)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    h = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    )
+    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(h))
 
 
 def geocode(address: str) -> Location:
@@ -19,37 +134,13 @@ def geocode(address: str) -> Location:
     Args:
         address: Free-text address, e.g. "Bahnhofstrasse 1, Zürich".
     """
-    # TODO: use a geocoding service (e.g. Nominatim or transport.opendata.ch /locations).
+    # TODO: use a geocoding service (e.g. transport.opendata.ch /v1/locations).
     lat, lon = ZURICH_CENTER
     return Location(lat, lon, address)
 
 
-def haversine_km(a: Location, b: Location) -> float:
-    """Straight-line distance between two points in kilometres."""
-    r = 6371.0
-    dlat = math.radians(b.lat - a.lat)
-    dlon = math.radians(b.lon - a.lon)
-    h = math.sin(dlat / 2) ** 2 + math.cos(math.radians(a.lat)) * math.cos(math.radians(b.lat)) * math.sin(dlon / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(h))
-
-
-def get_drive_distance_km(origin: Location, destination: Location) -> float:
-    """Estimated road distance in km."""
-    # TODO: replace with a routing API (e.g. OpenRouteService, key in .env).
-    return haversine_km(origin, destination) * ROAD_FACTOR
-
-
-def get_drive_time(origin: Location, destination: Location, time: datetime) -> float:
-    """Estimated driving time in minutes.
-
-    Args:
-        time: Departure time (later: account for rush hour).
-    """
-    # TODO: use routing API with traffic; add rush-hour penalty.
-    return get_drive_distance_km(origin, destination) / AVG_CITY_SPEED_KMH * 60
-
-
-def get_walking_time(origin: Location, destination: Location) -> float:
-    """Estimated walking time in minutes (e.g. garage -> destination)."""
-    # TODO: use routing API footpaths instead of straight line.
-    return haversine_km(origin, destination) * 1.2 / WALKING_SPEED_KMH * 60
+def _to_coords(point: Point) -> Coordinates:
+    if isinstance(point, Location):
+        return (point.lat, point.lon)
+    lat, lon = point
+    return (float(lat), float(lon))

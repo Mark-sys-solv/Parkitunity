@@ -1,0 +1,524 @@
+{
+ "connections": [
+  {
+   "from": {
+    "station": {
+     "id": null,
+     "name": "Schulstrasse 44, Zürich",
+     "score": null,
+     "coordinate": {
+      "type": "WGS84",
+      "x": 47.4111,
+      "y": 8.5442
+     },
+     "distance": null
+    },
+    "arrival": null,
+    "departure": "2026-11-20T14:02:00+0100",
+    "platform": null
+   },
+   "to": {
+    "station": {
+     "id": "8591299",
+     "name": "Zürich, Paradeplatz",
+     "score": null,
+     "coordinate": {
+      "type": "WGS84",
+      "x": 47.369732,
+      "y": 8.538918
+     },
+     "distance": null
+    },
+    "arrival": "2026-11-20T14:24:00+0100",
+    "departure": null,
+    "platform": ""
+   },
+   "duration": "00d00:22:00",
+   "transfers": 0,
+   "products": [
+    "S19"
+   ],
+   "sections": [
+    {
+     "journey": null,
+     "walk": {
+      "duration": 120
+     },
+     "departure": {
+      "station": {
+       "id": null,
+       "name": "Schulstrasse 44, Zürich",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.4111,
+        "y": 8.5442
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:02:00+0100",
+      "platform": null
+     },
+     "arrival": {
+      "station": {
+       "id": "8503006",
+       "name": "Zürich Oerlikon",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.411531,
+        "y": 8.544137
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:04:00+0100",
+      "departure": null,
+      "platform": "1"
+     }
+    },
+    {
+     "journey": {
+      "name": "019952",
+      "category": "S",
+      "number": "19",
+      "operator": "SBB",
+      "to": "Dietikon"
+     },
+     "walk": null,
+     "departure": {
+      "station": {
+       "id": "8503006",
+       "name": "Zürich Oerlikon",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.411531,
+        "y": 8.544137
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:04:00+0100",
+      "platform": "1"
+     },
+     "arrival": {
+      "station": {
+       "id": "8503000",
+       "name": "Zürich HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.378176,
+        "y": 8.540212
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:09:00+0100",
+      "departure": null,
+      "platform": "31"
+     }
+    },
+    {
+     "journey": null,
+     "walk": {
+      "duration": 900
+     },
+     "departure": {
+      "station": {
+       "id": "8503000",
+       "name": "Zürich HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.378176,
+        "y": 8.540212
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:09:00+0100",
+      "platform": "31"
+     },
+     "arrival": {
+      "station": {
+       "id": "8591299",
+       "name": "Zürich, Paradeplatz",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.369732,
+        "y": 8.538918
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:24:00+0100",
+      "departure": null,
+      "platform": null
+     }
+    }
+   ]
+  },
+  {
+   "from": {
+    "station": {
+     "id": null,
+     "name": "Schulstrasse 44, Zürich",
+     "score": null,
+     "coordinate": {
+      "type": "WGS84",
+      "x": 47.4111,
+      "y": 8.5442
+     },
+     "distance": null
+    },
+    "arrival": null,
+    "departure": "2026-11-20T14:02:00+0100",
+    "platform": null
+   },
+   "to": {
+    "station": {
+     "id": "8591299",
+     "name": "Zürich, Paradeplatz",
+     "score": null,
+     "coordinate": {
+      "type": "WGS84",
+      "x": 47.369732,
+      "y": 8.538918
+     },
+     "distance": null
+    },
+    "arrival": "2026-11-20T14:19:00+0100",
+    "departure": null,
+    "platform": ""
+   },
+   "duration": "00d00:17:00",
+   "transfers": 1,
+   "products": [
+    "S19",
+    "7"
+   ],
+   "sections": [
+    {
+     "journey": null,
+     "walk": {
+      "duration": 120
+     },
+     "departure": {
+      "station": {
+       "id": null,
+       "name": "Schulstrasse 44, Zürich",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.4111,
+        "y": 8.5442
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:02:00+0100",
+      "platform": null
+     },
+     "arrival": {
+      "station": {
+       "id": "8503006",
+       "name": "Zürich Oerlikon",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.411531,
+        "y": 8.544137
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:04:00+0100",
+      "departure": null,
+      "platform": "1"
+     }
+    },
+    {
+     "journey": {
+      "name": "019952",
+      "category": "S",
+      "number": "19",
+      "operator": "SBB",
+      "to": "Dietikon"
+     },
+     "walk": null,
+     "departure": {
+      "station": {
+       "id": "8503006",
+       "name": "Zürich Oerlikon",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.411531,
+        "y": 8.544137
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:04:00+0100",
+      "platform": "1"
+     },
+     "arrival": {
+      "station": {
+       "id": "8503000",
+       "name": "Zürich HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.378176,
+        "y": 8.540212
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:09:00+0100",
+      "departure": null,
+      "platform": "31"
+     }
+    },
+    {
+     "journey": null,
+     "walk": {
+      "duration": 300
+     },
+     "departure": {
+      "station": {
+       "id": "8503000",
+       "name": "Zürich HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.378176,
+        "y": 8.540212
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:09:00+0100",
+      "platform": "31"
+     },
+     "arrival": {
+      "station": {
+       "id": "8591067",
+       "name": "Zürich, Bahnhofstrasse/HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.376224,
+        "y": 8.539457
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:14:00+0100",
+      "departure": null,
+      "platform": null
+     }
+    },
+    {
+     "journey": {
+      "name": "023599",
+      "category": "T",
+      "number": "7",
+      "operator": "VBZ    F",
+      "to": "Zürich, Wollishoferplatz"
+     },
+     "walk": null,
+     "departure": {
+      "station": {
+       "id": "8591067",
+       "name": "Zürich, Bahnhofstrasse/HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.376224,
+        "y": 8.539457
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:16:00+0100",
+      "platform": null
+     },
+     "arrival": {
+      "station": {
+       "id": "8591299",
+       "name": "Zürich, Paradeplatz",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.369732,
+        "y": 8.538918
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:19:00+0100",
+      "departure": null,
+      "platform": null
+     }
+    }
+   ]
+  },
+  {
+   "from": {
+    "station": {
+     "id": null,
+     "name": "Schulstrasse 44, Zürich",
+     "score": null,
+     "coordinate": {
+      "type": "WGS84",
+      "x": 47.4111,
+      "y": 8.5442
+     },
+     "distance": null
+    },
+    "arrival": null,
+    "departure": "2026-11-20T14:06:00+0100",
+    "platform": null
+   },
+   "to": {
+    "station": {
+     "id": "8591299",
+     "name": "Zürich, Paradeplatz",
+     "score": null,
+     "coordinate": {
+      "type": "WGS84",
+      "x": 47.369732,
+      "y": 8.538918
+     },
+     "distance": null
+    },
+    "arrival": "2026-11-20T14:31:00+0100",
+    "departure": null,
+    "platform": ""
+   },
+   "duration": "00d00:25:00",
+   "transfers": 0,
+   "products": [
+    "S2"
+   ],
+   "sections": [
+    {
+     "journey": null,
+     "walk": {
+      "duration": 300
+     },
+     "departure": {
+      "station": {
+       "id": null,
+       "name": "Schulstrasse 44, Zürich",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.4111,
+        "y": 8.5442
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:06:00+0100",
+      "platform": null
+     },
+     "arrival": {
+      "station": {
+       "id": "8503006",
+       "name": "Zürich Oerlikon",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.411531,
+        "y": 8.544137
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:11:00+0100",
+      "departure": null,
+      "platform": "4"
+     }
+    },
+    {
+     "journey": {
+      "name": "018253",
+      "category": "S",
+      "number": "2",
+      "operator": "SBB",
+      "to": "Ziegelbrücke"
+     },
+     "walk": null,
+     "departure": {
+      "station": {
+       "id": "8503006",
+       "name": "Zürich Oerlikon",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.411531,
+        "y": 8.544137
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:11:00+0100",
+      "platform": "4"
+     },
+     "arrival": {
+      "station": {
+       "id": "8503000",
+       "name": "Zürich HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.378176,
+        "y": 8.540212
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:16:00+0100",
+      "departure": null,
+      "platform": "32"
+     }
+    },
+    {
+     "journey": null,
+     "walk": {
+      "duration": 900
+     },
+     "departure": {
+      "station": {
+       "id": "8503000",
+       "name": "Zürich HB",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.378176,
+        "y": 8.540212
+       },
+       "distance": null
+      },
+      "arrival": null,
+      "departure": "2026-11-20T14:16:00+0100",
+      "platform": "32"
+     },
+     "arrival": {
+      "station": {
+       "id": "8591299",
+       "name": "Zürich, Paradeplatz",
+       "score": null,
+       "coordinate": {
+        "type": "WGS84",
+        "x": 47.369732,
+        "y": 8.538918
+       },
+       "distance": null
+      },
+      "arrival": "2026-11-20T14:31:00+0100",
+      "departure": null,
+      "platform": null
+     }
+    }
+   ]
+  }
+ ]
+}

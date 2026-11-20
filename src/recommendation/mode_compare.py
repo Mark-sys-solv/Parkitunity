@@ -33,7 +33,7 @@ def compare_modes(origin: str, destination: str, time: datetime) -> ModeComparis
     # TODO: make parking duration a user input.
     ranked = rank_garages(dest_loc, time, top_n=1)
     best = ranked[0] if ranked else None
-    drive_min = routing.get_drive_time(origin_loc, dest_loc, time)
+    drive_min = routing.get_drive_time(origin_loc, dest_loc)
     distance_km = routing.get_drive_distance_km(origin_loc, dest_loc)
     walk_min = best["walking_min"] if best else 0.0
     rate = (best["garage"].hourly_rate_chf or 0.0) if best else 0.0
@@ -42,9 +42,9 @@ def compare_modes(origin: str, destination: str, time: datetime) -> ModeComparis
 
     # --- Transit -----------------------------------------------------------
     # TODO: compute ticket price from ZVV zones.
-    connections = transit_api.get_connections(origin, destination, time)
-    fastest = min(connections, key=lambda c: c.duration_min) if connections else None
-    transit_duration = fastest.duration_min if fastest else float("inf")
+    transit = transit_api.get_transit_options(origin, destination, time)
+    # No connection / API down -> infinite duration, so the car is recommended.
+    transit_duration = transit["duration_min"] if transit else float("inf")
 
     # TODO: smarter decision rule (weight time vs. cost, weather, user prefs).
     recommendation = "transit" if transit_duration <= car_duration * 1.2 else "car"
@@ -58,7 +58,7 @@ def compare_modes(origin: str, destination: str, time: datetime) -> ModeComparis
         "transit": {
             "duration_min": round(transit_duration, 1),
             "cost_chf": DEFAULT_TRANSIT_TICKET_CHF,
-            "transfers": fastest.transfers if fastest else 0,
+            "transfers": transit["transfers"] if transit else 0,
         },
         "recommendation": recommendation,
     }

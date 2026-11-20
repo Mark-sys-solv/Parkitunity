@@ -1,12 +1,29 @@
-"""Live parking garage data for Zurich (Parkleitsystem Zürich)."""
+"""Live occupancy of Zurich parking garages via the ParkenDD API.
+
+ParkenDD (https://api.parkendd.de) mirrors the official feed of
+PLS Parkleitsystem Zürich AG (CC-0 licence).
+
+Two entry points:
+- ``fetch_occupancy()``: raw records for the collector/database (always fresh).
+- ``fetch_garages()``:   ``Garage`` objects for the app (cached, dummy fallback).
+"""
 
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
+from typing import Any
 
+from src import config
+from src.data.http_utils import get_json, ttl_cache
 from src.models import Garage, Location
 
-# Dummy garages so the app runs without network access.
+logger = logging.getLogger(__name__)
+
+# ParkenDD lot states that carry no usable occupancy value.
+_STATES_WITHOUT_DATA = {"nodata", "unknown"}
+
+# Dummy garages so the app still works when the API is down.
 # Coordinates are approximate; capacities/rates are placeholders.
 _DUMMY_GARAGES: list[Garage] = [
     Garage("urania", "Parkhaus Urania", Location(47.3744, 8.5396, "Urania"), 600, 120, 4.0),
@@ -17,33 +34,101 @@ _DUMMY_GARAGES: list[Garage] = [
 ]
 
 
-def fetch_garages() -> list[Garage]:
-    """Return all garages with their current number of free spots.
+def fetch_occupancy(retries: int = 2) -> list[dict[str, Any]]:
+    """Fetch the current occupancy of all Zurich garages.
+
+    Args:
+        retries: Extra attempts if the API fails (it is occasionally flaky).
 
     Returns:
-        List of ``Garage`` objects with ``free_spots`` and ``updated_at`` set.
+        One dict per garage with keys ``garage_id`` (str), ``name`` (str),
+        ``free_spots`` (int), ``capacity`` (int | None), ``timestamp``
+        (timezone-aware UTC datetime of the last source update), ``lat`` and
+        ``lon`` (float | None). Empty list if the API is unavailable.
     """
-    # TODO: fetch and parse config.PARKING_FEED_URL (RSS) with requests.
-    # TODO: map feed entries to Garage objects (ids must be stable for the DB/ML).
-    # TODO: fall back to dummy data if config.USE_DUMMY_DATA or on network error.
-    now = datetime.now()
-    return [
-        Garage(g.id, g.name, g.location, g.capacity, g.free_spots, g.hourly_rate_chf, now)
-        for g in _DUMMY_GARAGES
+    data = get_json(config.PARKENDD_URL, timeout=config.PARKING_TIMEOUT_S, retries=retries)
+    if not isinstance(data, dict) or not isinstance(data.get("lots"), list):
+        logger.error("No usable parking data from %s", config.PARKENDD_URL)
+        return []
+    return parse_parkendd(data)
+
+
+def parse_parkendd(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert a ParkenDD city response into occupancy records.
+
+    Cleans up known quirks of the feed: lots without data are skipped,
+    a capacity of 0 is treated as unknown, and ``free_spots`` is clipped to
+    ``[0, capacity]`` (the feed sometimes reports more free spots than exist).
+    """
+    timestamp = _parse_timestamp(data.get("last_updated"))
+    records: list[dict[str, Any]] = []
+    for lot in data.get("lots", []):
+        try:
+            if lot.get("state") in _STATES_WITHOUT_DATA or lot.get("free") is None:
+                continue
+            capacity = int(lot["total"]) if lot.get("total") else None
+            free = max(0, int(lot["free"]))
+            if lot.get("state") == "closed":
+                free = 0
+            if capacity is not None:
+                free = min(free, capacity)
+            coords = lot.get("coords") or {}
+            records.append(
+                {
+                    "garage_id": str(lot["id"]),
+                    "name": lot.get("name") or str(lot["id"]),
+                    "free_spots": free,
+                    "capacity": capacity,
+                    "timestamp": timestamp,
+                    "lat": coords.get("lat"),
+                    "lon": coords.get("lng"),
+                }
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Skipping malformed lot %r: %s", lot.get("id"), exc)
+    return records
+
+
+def _parse_timestamp(value: Any) -> datetime:
+    """Parse ParkenDD's ``last_updated`` (naive ISO string in UTC)."""
+    try:
+        ts = datetime.fromisoformat(str(value))
+        return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+    except ValueError:
+        logger.warning("Invalid last_updated %r, using current time", value)
+        return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+@ttl_cache(config.PARKING_CACHE_TTL_S)
+def fetch_garages() -> list[Garage]:
+    """Return garages for the app, cached for ``PARKING_CACHE_TTL_S`` seconds.
+
+    Only garages with coordinates and a known capacity are returned, since the
+    map and ranking need both. Falls back to dummy garages if live data is
+    unavailable (or ``USE_DUMMY_DATA`` is set), so the result is never empty
+    and a failing API is queried at most once per cache period.
+    """
+    if config.USE_DUMMY_DATA:
+        return list(_DUMMY_GARAGES)
+    garages = [
+        Garage(
+            id=r["garage_id"],
+            name=r["name"],
+            location=Location(r["lat"], r["lon"], r["name"]),
+            capacity=r["capacity"],
+            free_spots=r["free_spots"],
+            hourly_rate_chf=None,  # not provided by ParkenDD
+            updated_at=r["timestamp"],
+        )
+        for r in fetch_occupancy(retries=1)
+        if r["lat"] is not None and r["lon"] is not None and r["capacity"]
     ]
+    if not garages:
+        logger.warning("Live parking data unavailable, using dummy garages")
+        return list(_DUMMY_GARAGES)
+    return garages
 
 
 def get_garage(garage_id: str) -> Garage | None:
     """Return a single garage by id, or ``None`` if unknown."""
-    # TODO: cache fetch_garages() results to avoid repeated requests.
     return next((g for g in fetch_garages() if g.id == garage_id), None)
-
-
-def parse_feed(raw_xml: str) -> list[Garage]:
-    """Parse the raw RSS feed into ``Garage`` objects.
-
-    Args:
-        raw_xml: Response body of the parking feed.
-    """
-    # TODO: implement (xml.etree.ElementTree or feedparser).
-    raise NotImplementedError

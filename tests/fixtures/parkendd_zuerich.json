@@ -1,0 +1,84 @@
+{
+ "last_downloaded": "2026-11-20T12:50:11",
+ "last_updated": "2026-11-20T12:41:21",
+ "lots": [
+  {
+   "address": "Otto-Schütz-Weg",
+   "coords": {
+    "lat": 47.414848,
+    "lng": 8.540748
+   },
+   "forecast": false,
+   "free": 162,
+   "id": "zuerichparkhausaccu",
+   "lot_type": "Parkhaus",
+   "name": "Accu",
+   "state": "open",
+   "total": 194
+  },
+  {
+   "address": "Badenerstrasse 380",
+   "coords": {
+    "lat": 47.379458,
+    "lng": 8.509675
+   },
+   "forecast": false,
+   "free": 41,
+   "id": "zuerichparkhausalbisriederplatz",
+   "lot_type": "Parkhaus",
+   "name": "Albisriederplatz",
+   "state": "open",
+   "total": 66
+  },
+  {
+   "address": "Badenerstrasse 420",
+   "coords": null,
+   "forecast": false,
+   "free": 62,
+   "id": "zuerichparkhauscrowneplaza",
+   "lot_type": "Parkhaus",
+   "name": "Crowne Plaza",
+   "state": "open",
+   "total": 520
+  },
+  {
+   "address": "Mythenquai 21",
+   "coords": null,
+   "forecast": false,
+   "free": 126,
+   "id": "zuerichparkhaushafenenge",
+   "lot_type": "Parkhaus",
+   "name": "Hafen Enge",
+   "state": "open",
+   "total": 0
+  },
+  {
+   "address": "Armin-Bollinger-Weg",
+   "coords": {
+    "lat": 47.414062,
+    "lng": 8.539274
+   },
+   "forecast": false,
+   "free": 69,
+   "id": "zuerichparkhausmaxbillplatz",
+   "lot_type": "Parkhaus",
+   "name": "Max-Bill-Platz",
+   "state": "open",
+   "total": 59
+  },
+  {
+   "address": "Förrlibuckstrasse 151",
+   "coords": {
+    "lat": 47.391929,
+    "lng": 8.511443
+   },
+   "forecast": false,
+   "free": 0,
+   "id": "zuerichparkhauspwest",
+   "lot_type": "Parkhaus",
+   "name": "P West",
+   "state": "nodata",
+   "total": 1000
+  }
+ ]
+}

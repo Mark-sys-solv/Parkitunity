@@ -16,7 +16,7 @@ from src.config import MODEL_PATH
 
 def load_training_data() -> pd.DataFrame:
     """Load occupancy history and build the feature table."""
-    # TODO: database.load_occupancy() -> features.build_features().
+    # TODO: database.load_history() -> features.build_features().
     raise NotImplementedError
 
 

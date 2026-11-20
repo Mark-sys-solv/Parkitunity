@@ -55,4 +55,7 @@ with right:
         st.subheader(f"Forecast: {ranked[0]['garage'].name}")
         render_occupancy_chart(ranked[0]["garage"].id, inputs["time"])
 
-st.info("⚠️ Prototype – all data is currently dummy data.")
+st.info(
+    "⚠️ Prototype – parking occupancy and transit connections are live; "
+    "geocoding, prices and occupancy forecasts are still placeholders."
+)
