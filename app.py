@@ -62,7 +62,7 @@ if destination:
         st.caption(caption)
 
 # --- Middle: map + table ------------------------------------------------------------
-render_map(ranked, destination, best_id, inputs["max_price_chf"])
+render_map(ranked, destination, best_id, inputs["max_price_chf"], origin)
 render_legend()
 if ranked:
     with st.expander("Alle Parkhäuser als Tabelle"):

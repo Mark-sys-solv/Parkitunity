@@ -13,7 +13,15 @@ from src.data import geocoding
 from src.models import Garage, Location
 from src.ui import backend
 from src.ui.charts import mode_chart_data, occupancy_chart_data
-from src.ui.map_view import DESTINATION_COLOR, OVER_BUDGET_COLOR, garage_table, map_data
+from src.ui.map_view import (
+    DESTINATION_MARKER,
+    MAX_ZOOM,
+    OVER_BUDGET_COLOR,
+    START_MARKER,
+    fit_zoom,
+    garage_table,
+    map_data,
+)
 from src.ui.navigation import google_maps_url, recommended_route
 from src.ui.recommendation_card import build_recommendation
 
@@ -126,22 +134,37 @@ def test_card_all_garages_full_transit_only() -> None:
 # --- map --------------------------------------------------------------------------------
 
 
-def test_map_data_colours_sizes_and_destination() -> None:
+def test_map_data_colours_sizes_start_and_destination() -> None:
     ranked = [
         _ranked(free=200, garage_id="a", name="A"),
         _ranked(free=3, garage_id="b", name="B"),
         _ranked(free=200, rate=7.0, garage_id="c", name="C"),  # over budget
     ]
-    data = map_data(ranked, DEST, recommended_id="a", max_price_chf=5.0)
+    origin = Location(47.4115, 8.5441, "Bahnhof Oerlikon")
+    data = map_data(ranked, DEST, recommended_id="a", max_price_chf=5.0, origin=origin)
     assert list(data.columns) == ["lat", "lon", "color", "size"]
-    assert list(data["color"]) == [backend.STATUS_COLORS["good"], backend.STATUS_COLORS["full"], OVER_BUDGET_COLOR, DESTINATION_COLOR]
-    assert data["size"].iloc[0] > data["size"].iloc[1]  # the recommendation is bigger
+    garages, markers = data.iloc[:3], data.iloc[3:]
+    assert list(garages["color"]) == [backend.STATUS_COLORS["good"], backend.STATUS_COLORS["full"], OVER_BUDGET_COLOR]
+    assert garages["size"].iloc[0] > garages["size"].iloc[1]  # the recommendation is bigger
+    # Start and destination come last (drawn on top), each as dots from big to small.
+    expected = [(origin.lat, c, s) for c, s in START_MARKER] + [(DEST.lat, c, s) for c, s in DESTINATION_MARKER]
+    assert list(zip(markers["lat"], markers["color"], markers["size"])) == expected
+    assert list(markers["size"].iloc[:len(START_MARKER)]) == sorted(markers["size"].iloc[:len(START_MARKER)], reverse=True)
 
 
 def test_map_data_without_destination_or_garages() -> None:
-    assert len(map_data([_ranked()], None, None, 8)) == 1  # no destination dot
+    assert len(map_data([_ranked()], None, None, 8)) == 1  # no start, no destination
+    assert len(map_data([], None, None, 8, origin=DEST)) == len(START_MARKER)  # only the start point
     empty = map_data([], None, None, 8)
     assert len(empty) == 1 and empty["color"].iloc[0] == "#00000000"  # invisible dot centres the map
+
+
+def test_fit_zoom_keeps_all_dots_on_the_map() -> None:
+    city = pd.DataFrame({"lat": [47.356, 47.415], "lon": [8.510, 8.554]})  # spread of the Zurich garages
+    far_start = pd.concat([city, pd.DataFrame({"lat": [47.50], "lon": [8.72]})])  # start in Winterthur
+    assert 11 <= fit_zoom(city) <= 12.5
+    assert fit_zoom(far_start) < fit_zoom(city) - 1  # zoomed out to show Winterthur as well
+    assert fit_zoom(pd.DataFrame({"lat": [47.37], "lon": [8.54]})) == MAX_ZOOM  # one dot: not too close
 
 
 def test_garage_table() -> None:
