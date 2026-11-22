@@ -14,8 +14,10 @@ from typing import Any
 
 import pytest
 import requests
+import streamlit as st
 
-from src.data import http_utils, parking_api, transit_api
+from src.data import geocoding, http_utils, parking_api, transit_api, weather_api
+from src.ml import predict
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -34,12 +36,21 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True)
-def _isolate(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear caches, skip retry sleeps and block the network for non-live tests."""
+def _isolate(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Clear caches, skip retry sleeps, use temp model/DB paths and block the network."""
     parking_api.fetch_garages.cache_clear()
     transit_api._fetch_best_connection.cache_clear()
+    weather_api._fetch.cache_clear()
+    predict._estimate.cache_clear()
+    predict._load_bundle.cache_clear()
+    predict._is_synthetic.cache_clear()
+    st.cache_data.clear()  # e.g. geocoding results
     monkeypatch.setattr(http_utils, "_sleep", lambda s: None)
+    monkeypatch.setattr(geocoding, "_sleep", lambda s: None)  # no 1-second waits in tests
     monkeypatch.setattr(parking_api.config, "USE_DUMMY_DATA", False)
+    # Never read the real database or model in tests.
+    monkeypatch.setattr(predict, "DB_PATH", tmp_path / "no-real-data.db")
+    monkeypatch.setattr(predict, "MODEL_PATH", tmp_path / "no-model.pkl.gz")
     if request.node.get_closest_marker("live") is None:
 
         def _blocked(*args: Any, **kwargs: Any) -> None:

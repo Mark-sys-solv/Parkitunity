@@ -4,7 +4,7 @@ ParkenDD (https://api.parkendd.de) mirrors the official feed of
 PLS Parkleitsystem Zürich AG (CC-0 licence).
 
 Two entry points:
-- ``fetch_occupancy()``: raw records for the collector/database (always fresh).
+- ``fetch_occupancy()``: raw records of the current occupancy (always fresh).
 - ``fetch_garages()``:   ``Garage`` objects for the app (cached, dummy fallback).
 """
 
@@ -32,6 +32,54 @@ _DUMMY_GARAGES: list[Garage] = [
     Garage("opera", "Parkhaus Opéra", Location(47.3650, 8.5470, "Opernhaus"), 300, 90, 4.0),
     Garage("hohe-promenade", "Parkhaus Hohe Promenade", Location(47.3685, 8.5480, "Hohe Promenade"), 550, 210, 3.5),
 ]
+
+
+# PLACEHOLDER hourly rates in CHF – rough guesses, NOT real prices.
+# Used while config.USE_PLACEHOLDER_PRICES is true (ParkenDD has no prices).
+_PLACEHOLDER_RATES_CHF: dict[str, float] = {
+    "zuerichparkhausaccu": 2.0,
+    "zuerichparkhausalbisriederplatz": 2.5,
+    "zuerichparkhausbleicherweg": 4.5,
+    "zuerichparkhauscentereleven": 2.0,
+    "zuerichparkhauscityparking": 4.0,
+    "zuerichparkhauscityport": 3.0,
+    "zuerichparkhauscrowneplaza": 3.5,
+    "zuerichparkhausdorflinde": 2.0,
+    "zuerichparkhausfeldegg": 3.5,
+    "zuerichparkhausglobus": 5.0,
+    "zuerichparkhaushardauii": 2.0,
+    "zuerichparkhaushauptbahnhof": 6.0,
+    "zuerichparkhaushohepromenade": 4.0,
+    "zuerichparkhausjelmoli": 5.0,
+    "zuerichparkhausjungholz": 2.0,
+    "zuerichparkhausmaxbillplatz": 2.5,
+    "zuerichparkhausmessezuerichag": 3.0,
+    "zuerichparkhausnordhaus": 2.5,
+    "zuerichparkhausoctavo": 2.5,
+    "zuerichparkhausopéra": 4.5,
+    "zuerichparkhauspwest": 2.5,
+    "zuerichparkhausparkhyatt": 5.0,
+    "zuerichparkhausparkside": 3.0,
+    "zuerichparkhauspfingstweid": 2.5,
+    "zuerichparkhausstampfenbach": 3.5,
+    "zuerichparkhaustalgarten": 4.0,
+    "zuerichparkhaususznord": 3.5,
+    "zuerichparkhausuniirchel": 2.0,
+    "zuerichparkhausurania": 4.5,
+    "zuerichparkhausutoquai": 4.0,
+    "zuerichparkhauszueri11shopping": 2.0,
+    "zuerichparkhauszuerichhorn": 3.5,
+    "zuerichparkplatztheater11": 2.5,
+    "zuerichparkplatzuszsued": 3.5,
+}
+_PLACEHOLDER_DEFAULT_RATE_CHF = 3.5
+
+
+def placeholder_rate(garage_id: str) -> float | None:
+    """Placeholder hourly rate for a garage, or ``None`` if placeholders are off."""
+    if not config.USE_PLACEHOLDER_PRICES:
+        return None
+    return _PLACEHOLDER_RATES_CHF.get(garage_id, _PLACEHOLDER_DEFAULT_RATE_CHF)
 
 
 def fetch_occupancy(retries: int = 2) -> list[dict[str, Any]]:
@@ -117,7 +165,7 @@ def fetch_garages() -> list[Garage]:
             location=Location(r["lat"], r["lon"], r["name"]),
             capacity=r["capacity"],
             free_spots=r["free_spots"],
-            hourly_rate_chf=None,  # not provided by ParkenDD
+            hourly_rate_chf=placeholder_rate(r["garage_id"]),  # ParkenDD has no prices
             updated_at=r["timestamp"],
         )
         for r in fetch_occupancy(retries=1)

@@ -23,9 +23,10 @@ from src.config import (
     AVG_CITY_SPEED_KMH,
     ROAD_FACTOR,
     ROUTING_PROVIDER,
+    WALKING_DETOUR_FACTOR,
     WALKING_SPEED_KMH,
-    ZURICH_CENTER,
 )
+from src.data.geocoding import geocode as find_coordinates
 from src.models import Location
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,6 @@ Coordinates = tuple[float, float]  # (lat, lon)
 Point = Location | Coordinates
 
 EARTH_RADIUS_KM = 6371.0
-WALKING_DETOUR_FACTOR = 1.2
 
 
 class RoutingProvider(Protocol):
@@ -111,7 +111,10 @@ def get_drive_distance_km(origin: Point, destination: Point) -> float:
 
 
 def get_walking_time(origin: Point, destination: Point) -> float:
-    """Estimated walking time in minutes (e.g. garage -> destination)."""
+    """Estimated walking time in minutes (e.g. garage -> destination).
+
+    Straight-line distance × ``WALKING_DETOUR_FACTOR`` at ``WALKING_SPEED_KMH`` (config).
+    """
     # TODO: use routing API footpaths instead of straight line.
     return haversine_km(origin, destination) * WALKING_DETOUR_FACTOR / WALKING_SPEED_KMH * 60
 
@@ -128,15 +131,20 @@ def haversine_km(a: Point, b: Point) -> float:
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(h))
 
 
-def geocode(address: str) -> Location:
-    """Convert an address or place name into coordinates.
+def geocode(address: str) -> Location | None:
+    """Convert an address or place name into a ``Location``.
+
+    Uses OpenStreetMap Nominatim (see ``src/data/geocoding.py``); coordinate
+    strings like ``"47.3769,8.5417"`` are parsed directly.
 
     Args:
         address: Free-text address, e.g. "Bahnhofstrasse 1, Zürich".
+
+    Returns:
+        The location, or ``None`` if the address was not found.
     """
-    # TODO: use a geocoding service (e.g. transport.opendata.ch /v1/locations).
-    lat, lon = ZURICH_CENTER
-    return Location(lat, lon, address)
+    coords = find_coordinates(address)
+    return Location(*coords, name=address) if coords is not None else None
 
 
 def _to_coords(point: Point) -> Coordinates:

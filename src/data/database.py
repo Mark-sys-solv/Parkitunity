@@ -2,8 +2,8 @@
 
 Timestamps are stored as UTC ISO 8601 strings (``2026-11-20T12:41:21Z``), so
 they sort and compare correctly as text. ``(garage_id, timestamp)`` is the
-primary key: inserting a measurement twice (e.g. when the source has not
-updated between two collector runs) is silently ignored.
+primary key: inserting a measurement twice (e.g. when the downloaded history
+is imported again) is silently ignored.
 """
 
 from __future__ import annotations
@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS occupancy (
     free_spots  INTEGER NOT NULL,
     capacity    INTEGER,           -- NULL if unknown
     PRIMARY KEY (garage_id, timestamp)
+);
+-- Key/value metadata about the dataset, e.g. synthetic = "true".
+CREATE TABLE IF NOT EXISTS dataset_info (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 """
 
@@ -108,6 +113,30 @@ def load_history(
     df["free_spots"] = df["free_spots"].astype("Int64")
     df["capacity"] = df["capacity"].astype("Int64")
     return df
+
+
+def set_dataset_info(info: Mapping[str, str], db_path: Path = DB_PATH) -> None:
+    """Store metadata about the dataset (e.g. ``{"synthetic": "true"}``)."""
+    with closing(get_connection(db_path)) as conn, conn:
+        conn.executescript(SCHEMA)
+        conn.executemany(
+            "INSERT OR REPLACE INTO dataset_info (key, value) VALUES (?, ?)",
+            [(k, str(v)) for k, v in info.items()],
+        )
+
+
+def get_dataset_info(db_path: Path = DB_PATH) -> dict[str, str]:
+    """Return the dataset metadata (empty dict if none or the DB does not exist)."""
+    if not Path(db_path).exists():
+        return {}
+    init_db(db_path)
+    with closing(get_connection(db_path)) as conn:
+        return dict(conn.execute("SELECT key, value FROM dataset_info").fetchall())
+
+
+def is_synthetic(db_path: Path = DB_PATH) -> bool:
+    """True if the database was filled by the synthetic data generator."""
+    return get_dataset_info(db_path).get("synthetic") == "true"
 
 
 def to_utc_iso(value: datetime | str) -> str:

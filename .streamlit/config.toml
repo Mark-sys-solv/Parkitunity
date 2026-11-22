@@ -1,0 +1,8 @@
+# Calm blue accent instead of Streamlit's default red.
+# Light/dark sections keep the automatic theme switch working.
+
+[theme.light]
+primaryColor = "#2a78d6"
+
+[theme.dark]
+primaryColor = "#3987e5"

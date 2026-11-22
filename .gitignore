@@ -5,8 +5,11 @@
 data/raw/*
 !data/raw/.gitkeep
 *.db
-# Collected CSVs live on the "data" branch (see README)
-data/occupancy/
+# Downloaded history is large (~150 MB) – re-create it with python -m src.data.download_history
+data/processed/history.csv
+
+# Trained models (~12 MB, retrain with `python -m src.ml.train`)
+models/*.pkl.gz
 
 # Python
 __pycache__/

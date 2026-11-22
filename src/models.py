@@ -30,15 +30,32 @@ class Garage:
 
 
 class CarOption(TypedDict):
-    duration_min: float
-    cost_chf: float
+    """Car part of ``compare_modes``. Numbers are ``None`` if ``available`` is False."""
+
+    available: bool  # False: no garage with free spots (within the price limit)
+    total_min: float | None  # drive + search + walk
+    drive_min: float | None
+    search_min: float | None
+    walk_min: float | None
+    cost_chf: float | None  # parking fee + km costs (round trip if config.ROUND_TRIP)
+    parking_cost_chf: float | None
+    km_cost_chf: float | None
     parking_garage_id: str | None
+    predicted_free: int | None
+    arrival: datetime | None  # at the destination
 
 
 class TransitOption(TypedDict):
-    duration_min: float
-    cost_chf: float
-    transfers: int
+    """Public transport part of ``compare_modes``. Numbers are ``None`` if not available."""
+
+    available: bool  # False: API down or no connection found
+    total_min: float | None  # waiting for the first departure + travel time
+    wait_min: float | None
+    duration_min: float | None  # travel time of the connection itself
+    cost_chf: float | None  # simplified ZVV fare (round trip if config.ROUND_TRIP)
+    transfers: int | None
+    departure: datetime | None
+    arrival: datetime | None
 
 
 class ModeComparison(TypedDict):
@@ -46,4 +63,5 @@ class ModeComparison(TypedDict):
 
     car: CarOption
     transit: TransitOption
-    recommendation: Literal["car", "transit"]
+    recommendation: Literal["car", "transit"] | None  # None: neither option available
+    reason: str  # short German explanation for the UI
