@@ -13,7 +13,7 @@ from src.config import PARKING_DURATION_H
 from src.ml.predict import model_info
 from src.ui import backend
 from src.ui.charts import render_mode_comparison, render_occupancy_chart
-from src.ui.map_view import render_garage_table, render_legend, render_map
+from src.ui.map_view import render_garage_info, render_garage_table, render_legend, render_map
 from src.ui.navigation import recommended_route
 from src.ui.recommendation_card import build_recommendation, render_recommendation
 from src.ui.sidebar import render_sidebar
@@ -62,8 +62,11 @@ if destination:
         st.caption(caption)
 
 # --- Middle: map + table ------------------------------------------------------------
-render_map(ranked, destination, best_id, inputs["max_price_chf"], origin)
+clicked_id = render_map(ranked, destination, best_id, inputs["max_price_chf"], origin)
 render_legend()
+by_id = {r["garage"].id: r for r in ranked}
+if clicked_id in by_id:
+    render_garage_info(by_id[clicked_id], best_id, inputs["max_price_chf"])
 if ranked:
     with st.expander("Alle Parkhäuser als Tabelle"):
         render_garage_table(ranked, best_id, inputs["max_price_chf"])
@@ -76,11 +79,14 @@ if ranked:
     if st.session_state.get("_selection_context") != context or st.session_state.get("selected_garage_id") not in ids:
         st.session_state["selected_garage_id"] = best_id or ids[0]
         st.session_state["_selection_context"] = context
+    # A newly clicked garage on the map is also shown in the occupancy chart.
+    if clicked_id in by_id and clicked_id != st.session_state.get("_last_map_click"):
+        st.session_state["selected_garage_id"] = clicked_id
+    st.session_state["_last_map_click"] = clicked_id
 
     left, right = st.columns([3, 2], gap="large") if comparison else (st.container(), None)
     with left:
         st.subheader("Belegung")
-        by_id = {r["garage"].id: r for r in ranked}
         selected_id = st.selectbox(
             "Parkhaus",
             options=ids,

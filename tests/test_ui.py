@@ -20,6 +20,7 @@ from src.ui.map_view import (
     START_MARKER,
     fit_zoom,
     garage_table,
+    hex_to_rgba,
     map_data,
 )
 from src.ui.navigation import google_maps_url, recommended_route
@@ -142,8 +143,11 @@ def test_map_data_colours_sizes_start_and_destination() -> None:
     ]
     origin = Location(47.4115, 8.5441, "Bahnhof Oerlikon")
     data = map_data(ranked, DEST, recommended_id="a", max_price_chf=5.0, origin=origin)
-    assert list(data.columns) == ["lat", "lon", "color", "size"]
+    assert list(data.columns) == ["lat", "lon", "color", "size", "name", "garage_id"]
     garages, markers = data.iloc[:3], data.iloc[3:]
+    assert list(garages["name"]) == ["Parkhaus A", "Parkhaus B", "Parkhaus C"]  # shown when pointing at a dot
+    assert list(garages["garage_id"]) == ["a", "b", "c"]  # returned when a dot is clicked
+    assert set(markers["name"]) == {"Startpunkt", "Ziel"} and set(markers["garage_id"]) == {""}
     assert list(garages["color"]) == [backend.STATUS_COLORS["good"], backend.STATUS_COLORS["full"], OVER_BUDGET_COLOR]
     assert garages["size"].iloc[0] > garages["size"].iloc[1]  # the recommendation is bigger
     # Start and destination come last (drawn on top), each as dots from big to small.
@@ -157,6 +161,11 @@ def test_map_data_without_destination_or_garages() -> None:
     assert len(map_data([], None, None, 8, origin=DEST)) == len(START_MARKER)  # only the start point
     empty = map_data([], None, None, 8)
     assert len(empty) == 1 and empty["color"].iloc[0] == "#00000000"  # invisible dot centres the map
+
+
+def test_hex_to_rgba() -> None:
+    assert hex_to_rgba("#2563eb") == [37, 99, 235, 255]
+    assert hex_to_rgba("#00000000") == [0, 0, 0, 0]  # invisible
 
 
 def test_fit_zoom_keeps_all_dots_on_the_map() -> None:

@@ -1,4 +1,4 @@
-"""Charts with Streamlit's built-in ``st.line_chart`` and ``st.bar_chart``.
+"""Charts with Streamlit's built-in ``st.line_chart`` and ``st.vega_lite_chart``.
 
 The ``*_data`` functions prepare a small pandas table (easy to test), the
 ``render_*`` functions show it.
@@ -71,16 +71,33 @@ def mode_chart_data(comparison: ModeComparison) -> pd.DataFrame:
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
+def _render_bars(table: pd.DataFrame, column: str) -> None:
+    """Upright bar chart of one column.
+
+    Not ``st.bar_chart``: that one turns the labels "Auto" and "ÖV" by 90 degrees.
+    """
+    data = table[[column]].rename_axis("Option").reset_index()
+    spec = {
+        "mark": {"type": "bar", "color": BAR_COLOR},
+        "encoding": {
+            "x": {"field": "Option", "type": "nominal", "title": None, "axis": {"labelAngle": 0}},
+            "y": {"field": column, "type": "quantitative", "title": None},
+            "tooltip": [{"field": "Option", "type": "nominal"}, {"field": column, "type": "quantitative"}],
+        },
+    }
+    st.vega_lite_chart(data, spec, height=250)
+
+
 def render_mode_comparison(comparison: ModeComparison) -> None:
     """Two small bar charts (time and cost) plus the exact numbers as text."""
     table = mode_chart_data(comparison)
     time_col, cost_col = st.columns(2)
     with time_col:
         st.caption("Gesamtzeit (einfach), min")
-        st.bar_chart(table["Minuten"], horizontal=True, color=BAR_COLOR, height=150, x_label="", y_label="")
+        _render_bars(table, "Minuten")
     with cost_col:
         st.caption("Kosten (hin & zurück), CHF")
-        st.bar_chart(table["CHF"], horizontal=True, color=BAR_COLOR, height=150, x_label="", y_label="")
+        _render_bars(table, "CHF")
 
     lines = []
     for label, missing in (("Auto", "kein Parkhaus"), ("ÖV", "keine Verbindung")):

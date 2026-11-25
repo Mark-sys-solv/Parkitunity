@@ -1,10 +1,12 @@
-"""Map of Zurich with all garages, the start point and the destination (``st.map``).
+"""Map of Zurich with all garages, the start point and the destination (``st.pydeck_chart``).
 
-``st.map`` can only draw coloured dots (one per row of a DataFrame) – no icons,
-no popups. Therefore:
-- the details of each garage are shown in a table below the map, and
+The map draws coloured dots (one per row of a DataFrame):
+- pointing at a dot shows its name (tooltip); clicking a garage selects it,
 - start and destination are drawn as several dots on the same spot, biggest
   first. The smaller dots lie on top, so it looks like a ring or a target.
+
+pydeck is installed automatically together with Streamlit, so it is not an
+extra entry in requirements.txt.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import math
 
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 from src.config import ZURICH_CENTER
@@ -23,7 +26,7 @@ START_COLOR = "#2563eb"  # blue: start point
 DESTINATION_COLOR = "#0b0b0b"  # black: destination
 RING_COLOR = "#ffffff"  # white ring, so start and destination stand out on light and dark maps
 
-# Dot sizes are radii in screen pixels (converted to metres for st.map in render_map).
+# Dot sizes are radii in screen pixels.
 GARAGE_SIZE_PX = 4
 RECOMMENDED_SIZE_PX = 8  # the recommended garage gets a bigger dot
 # Start and destination as (colour, radius in pixels), from the outside in.
@@ -31,12 +34,13 @@ START_MARKER = [(RING_COLOR, 10), (START_COLOR, 7)]  # blue dot with a white rin
 DESTINATION_MARKER = [(DESTINATION_COLOR, 10), (RING_COLOR, 7), (DESTINATION_COLOR, 4)]  # target
 
 # Used to choose a zoom level at which all dots fit on the map.
-MAP_HEIGHT_PX = 500  # default height of st.map
+MAP_HEIGHT_PX = 500  # height of the map
 MAP_WIDTH_PX = 600  # the real width depends on the screen – a careful guess
 MARGIN_PX = 30  # free space around the outermost dots
 EARTH_CIRCUMFERENCE_M = 40_075_016
 METRES_PER_DEGREE = 111_320  # length of one degree of latitude
 MIN_ZOOM, MAX_ZOOM = 8, 14  # 8 ≈ whole canton, 14 ≈ a few streets
+MAP_KEY = "garage_map"  # widget key of the map (it remembers the clicked garage)
 
 
 def is_over_budget(garage: Garage, max_price_chf: float) -> bool:
@@ -44,9 +48,23 @@ def is_over_budget(garage: Garage, max_price_chf: float) -> bool:
     return garage.hourly_rate_chf is not None and garage.hourly_rate_chf > max_price_chf
 
 
-def marker_rows(location: Location, layers: list[tuple[str, int]]) -> list[dict]:
+def marker_rows(location: Location, layers: list[tuple[str, int]], name: str) -> list[dict]:
     """Several dots on the same spot (biggest first), e.g. a dot with a ring."""
-    return [{"lat": location.lat, "lon": location.lon, "color": color, "size": size} for color, size in layers]
+    return [
+        {"lat": location.lat, "lon": location.lon, "color": color, "size": size, "name": name, "garage_id": ""}
+        for color, size in layers
+    ]
+
+
+MAP_COLUMNS = ["lat", "lon", "color", "size", "name", "garage_id"]
+
+
+def hex_to_rgba(color: str) -> list[int]:
+    """"#rrggbb" or "#rrggbbaa" -> [r, g, b, a] (pydeck wants numbers, not hex)."""
+    digits = color.lstrip("#")
+    if len(digits) == 6:
+        digits += "ff"  # fully opaque
+    return [int(digits[i:i + 2], 16) for i in (0, 2, 4, 6)]
 
 
 def map_data(
@@ -56,7 +74,7 @@ def map_data(
     max_price_chf: float,
     origin: Location | None = None,
 ) -> pd.DataFrame:
-    """One row per dot with the columns lat, lon, color, size (radius in pixels).
+    """One row per dot: lat, lon, color, size (radius in pixels), name (tooltip), garage_id.
 
     Args:
         ranked: Output of ``rank_garages`` (garage, predicted_free, ...).
@@ -71,22 +89,24 @@ def map_data(
         status = backend.availability(r["predicted_free"], garage.capacity)
         color = OVER_BUDGET_COLOR if is_over_budget(garage, max_price_chf) else backend.STATUS_COLORS[status]
         size = RECOMMENDED_SIZE_PX if garage.id == recommended_id else GARAGE_SIZE_PX
-        rows.append({"lat": garage.location.lat, "lon": garage.location.lon, "color": color, "size": size})
+        rows.append({"lat": garage.location.lat, "lon": garage.location.lon, "color": color, "size": size,
+                     "name": backend.display_name(garage), "garage_id": garage.id})
     # Start and destination come last, so they are drawn on top of the garages.
     if origin is not None:
-        rows.extend(marker_rows(origin, START_MARKER))
+        rows.extend(marker_rows(origin, START_MARKER, "Startpunkt"))
     if destination is not None:
-        rows.extend(marker_rows(destination, DESTINATION_MARKER))
+        rows.extend(marker_rows(destination, DESTINATION_MARKER, "Ziel"))
     if not rows:
         # Nothing to show: one invisible dot keeps the map centred on Zurich.
-        rows.append({"lat": ZURICH_CENTER[0], "lon": ZURICH_CENTER[1], "color": "#00000000", "size": 1})
-    return pd.DataFrame(rows, columns=["lat", "lon", "color", "size"])
+        rows.append({"lat": ZURICH_CENTER[0], "lon": ZURICH_CENTER[1], "color": "#00000000", "size": 1,
+                     "name": "", "garage_id": ""})
+    return pd.DataFrame(rows, columns=MAP_COLUMNS)
 
 
 def metres_per_pixel(zoom: float, lat: float) -> float:
     """How many metres one screen pixel covers at this zoom level.
 
-    st.map draws with deck.gl: there the whole world is 512 pixels wide at
+    The map is drawn with deck.gl: there the whole world is 512 pixels wide at
     zoom 0, and twice as wide with every zoom level.
     """
     return EARTH_CIRCUMFERENCE_M * math.cos(math.radians(lat)) / (512 * 2**zoom)
@@ -95,8 +115,8 @@ def metres_per_pixel(zoom: float, lat: float) -> float:
 def fit_zoom(data: pd.DataFrame) -> float:
     """Zoom level at which all dots fit on the map.
 
-    st.map puts the middle of all dots in the centre of the map; the zoom we
-    choose ourselves, so that start, destination and all garages are visible.
+    The middle of all dots is the centre of the map; the zoom is chosen so
+    that start, destination and all garages are visible.
     """
     lat = data["lat"].mean()
     height_m = (data["lat"].max() - data["lat"].min()) * METRES_PER_DEGREE
@@ -113,13 +133,54 @@ def render_map(
     recommended_id: str | None,
     max_price_chf: float,
     origin: Location | None = None,
-) -> None:
-    """Show the map with all garages, the start point and the destination."""
+) -> str | None:
+    """Show the map with all garages, the start point and the destination.
+
+    Returns the id of the garage the user clicked on (None = no garage clicked).
+    """
     data = map_data(ranked, destination, recommended_id, max_price_chf, origin)
-    zoom = fit_zoom(data)
-    # st.map wants radii in metres: convert, so the dots have the same size at every zoom.
-    data["size"] = data["size"] * metres_per_pixel(zoom, data["lat"].mean())
-    st.map(data, latitude="lat", longitude="lon", color="color", size="size", zoom=zoom)
+    view = pdk.ViewState(
+        latitude=(data["lat"].min() + data["lat"].max()) / 2,
+        longitude=(data["lon"].min() + data["lon"].max()) / 2,
+        zoom=fit_zoom(data),
+    )
+    data["rgba"] = data["color"].apply(hex_to_rgba)
+    is_garage = data["garage_id"] != ""
+
+    def dots(layer_id: str, rows: pd.DataFrame) -> pdk.Layer:
+        return pdk.Layer(
+            "ScatterplotLayer",
+            id=layer_id,
+            data=rows,
+            get_position=["lon", "lat"],
+            get_fill_color="rgba",
+            get_radius="size",
+            radius_units="'pixels'",  # inner quotes: a fixed value, not a column name; same size at every zoom
+            pickable=True,  # needed for the tooltip and for clicks
+        )
+
+    # Two layers, so a click can only select a garage, not the start or the destination.
+    deck = pdk.Deck(
+        layers=[dots("garages", data[is_garage]), dots("markers", data[~is_garage])],
+        initial_view_state=view,
+        map_style=None,  # Streamlit's default map, light or dark like the app
+        tooltip={"text": "{name}"},
+    )
+    event = st.pydeck_chart(deck, height=MAP_HEIGHT_PX, on_select="rerun", selection_mode="single-object", key=MAP_KEY)
+    clicked = event.selection.objects.get("garages", [])
+    return clicked[0]["garage_id"] if clicked else None
+
+
+def render_garage_info(entry: dict, recommended_id: str | None, max_price_chf: float) -> None:
+    """Name and key numbers of the garage that was clicked on the map."""
+    row = garage_table([entry], recommended_id, max_price_chf).iloc[0]
+    parts = [f"**{row['Parkhaus']}**", row["Verfügbarkeit"], f"{row['Frei (Prognose)']} frei (Prognose)"]
+    if row["CHF/h"] is not None and not pd.isna(row["CHF/h"]):
+        parts.append(f"CHF {row['CHF/h']:.2f}/h")
+    parts.append(f"{row['Fussweg (min)']} min zu Fuss")
+    if row["Hinweis"]:
+        parts.append(row["Hinweis"])
+    st.info(" · ".join(parts), icon="📍")
 
 
 def garage_table(ranked: list[dict], recommended_id: str | None, max_price_chf: float) -> pd.DataFrame:
