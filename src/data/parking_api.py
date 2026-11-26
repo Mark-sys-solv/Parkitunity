@@ -34,52 +34,11 @@ _DUMMY_GARAGES: list[Garage] = [
 ]
 
 
-# PLACEHOLDER hourly rates in CHF – rough guesses, NOT real prices.
-# Used while config.USE_PLACEHOLDER_PRICES is true (ParkenDD has no prices).
-_PLACEHOLDER_RATES_CHF: dict[str, float] = {
-    "zuerichparkhausaccu": 2.0,
-    "zuerichparkhausalbisriederplatz": 2.5,
-    "zuerichparkhausbleicherweg": 4.5,
-    "zuerichparkhauscentereleven": 2.0,
-    "zuerichparkhauscityparking": 4.0,
-    "zuerichparkhauscityport": 3.0,
-    "zuerichparkhauscrowneplaza": 3.5,
-    "zuerichparkhausdorflinde": 2.0,
-    "zuerichparkhausfeldegg": 3.5,
-    "zuerichparkhausglobus": 5.0,
-    "zuerichparkhaushardauii": 2.0,
-    "zuerichparkhaushauptbahnhof": 6.0,
-    "zuerichparkhaushohepromenade": 4.0,
-    "zuerichparkhausjelmoli": 5.0,
-    "zuerichparkhausjungholz": 2.0,
-    "zuerichparkhausmaxbillplatz": 2.5,
-    "zuerichparkhausmessezuerichag": 3.0,
-    "zuerichparkhausnordhaus": 2.5,
-    "zuerichparkhausoctavo": 2.5,
-    "zuerichparkhausopéra": 4.5,
-    "zuerichparkhauspwest": 2.5,
-    "zuerichparkhausparkhyatt": 5.0,
-    "zuerichparkhausparkside": 3.0,
-    "zuerichparkhauspfingstweid": 2.5,
-    "zuerichparkhausstampfenbach": 3.5,
-    "zuerichparkhaustalgarten": 4.0,
-    "zuerichparkhaususznord": 3.5,
-    "zuerichparkhausuniirchel": 2.0,
-    "zuerichparkhausurania": 4.5,
-    "zuerichparkhausutoquai": 4.0,
-    "zuerichparkhauszueri11shopping": 2.0,
-    "zuerichparkhauszuerichhorn": 3.5,
-    "zuerichparkplatztheater11": 2.5,
-    "zuerichparkplatzuszsued": 3.5,
-}
-_PLACEHOLDER_DEFAULT_RATE_CHF = 3.5
-
-
 def placeholder_rate(garage_id: str) -> float | None:
     """Placeholder hourly rate for a garage, or ``None`` if placeholders are off."""
     if not config.USE_PLACEHOLDER_PRICES:
         return None
-    return _PLACEHOLDER_RATES_CHF.get(garage_id, _PLACEHOLDER_DEFAULT_RATE_CHF)
+    return config.PLACEHOLDER_RATES_CHF.get(garage_id, config.PLACEHOLDER_DEFAULT_RATE_CHF)
 
 
 def fetch_occupancy(retries: int = 2) -> list[dict[str, Any]]:
@@ -175,6 +134,11 @@ def fetch_garages() -> list[Garage]:
         logger.warning("Live parking data unavailable, using dummy garages")
         return list(_DUMMY_GARAGES)
     return garages
+
+
+def is_dummy(garage_id: str) -> bool:
+    """True if this is one of the built-in example garages (live data unavailable)."""
+    return any(garage.id == garage_id for garage in _DUMMY_GARAGES)
 
 
 def get_garage(garage_id: str) -> Garage | None:

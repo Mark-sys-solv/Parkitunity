@@ -107,6 +107,7 @@ def _fetch(url: str, lat: float, lon: float, start_date: str, end_date: str) -> 
 
 
 def _parse(data: dict[str, Any]) -> pd.DataFrame:
+    """Convert the JSON answer into a table."""
     hourly = data["hourly"]
     return pd.DataFrame(
         {
@@ -118,4 +119,5 @@ def _parse(data: dict[str, Any]) -> pd.DataFrame:
 
 
 def _as_utc(dt: datetime) -> datetime:
+    """Convert to UTC (naive = UTC)."""
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)

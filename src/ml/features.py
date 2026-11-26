@@ -1,16 +1,14 @@
-"""Feature engineering for the occupancy forecast.
+# AI citation: this file was written with Claude (Anthropic), following the group's document
+# "Parkitunity: The Machine Learning Pattern" (FCS Assignments 10 and 11).
+"""Build the table the model learns from: one row per garage per 15 minutes.
 
-Every output row describes one garage at one *reference time* ``t`` (a slot on
-a regular 15-minute grid) and is used to predict the free spots at the
-*target time* ``T = t + horizon`` (30 minutes by default):
+Columns: ``time`` (Zurich time), ``garage``, ``capacity``, ``free``. On top come
 
-- calendar features describe ``T`` (that's when the driver arrives),
-- state features (current value, lags, rolling mean) describe what is known at ``t``,
-- ``lag_1w`` is the value one week before ``T`` (this is also the baseline),
-- ``target`` is the actually observed value at ``T`` (NaN if unknown).
+- the target ``free_in_1h``: free spaces in the same garage 1 hour later, and
+- the features: only things that are known at ``time`` (no future values!).
 
-Training (``train.py``) and prediction (``predict.py``) both use
-``build_features`` so the features are guaranteed to be computed identically.
+Training and prediction both use ``add_features``, so a feature always means
+the same thing.
 """
 
 from __future__ import annotations
@@ -23,111 +21,76 @@ import pandas as pd
 from src.config import FEATURE_FREQ_MIN, FORECAST_HORIZON_MIN, ZURICH_TZ
 
 FREQ = f"{FEATURE_FREQ_MIN}min"
-MAX_FILL_SLOTS = 2  # carry the last value forward over gaps of up to 30 min
+STEPS_AHEAD = FORECAST_HORIZON_MIN // FEATURE_FREQ_MIN  # 1 hour = 4 rows of 15 minutes
 
-CALENDAR_FEATURES = ["hour", "weekday", "is_weekend", "is_holiday", "month"]
-STATE_FEATURES = [
-    "free_now",
-    "capacity",
-    "occupancy_rate",
-    "rolling_mean_1h",
-    "lag_15min",
-    "lag_1h",
-    "lag_1w",
-]
-WEATHER_FEATURES = ["temperature_c", "precipitation_mm"]
-TARGET_COLUMN = "target"
+TARGET = "free_in_1h"
+FEATURES = ["free", "hour", "weekday", "garage_id", "capacity"]
+WEATHER_FEATURES = ["temperature_c", "rain_mm"]  # optional
+HOLIDAY_FEATURES = ["is_holiday"]  # optional
 
-# Human-readable names for plots and the video.
+# Human-readable names for the report and the video.
 FEATURE_LABELS = {
+    "free": "Free spaces now",
     "hour": "Hour of day",
     "weekday": "Weekday",
-    "is_weekend": "Weekend",
-    "is_holiday": "Public holiday",
-    "month": "Month",
-    "free_now": "Free spots now",
+    "garage_id": "Garage",
     "capacity": "Capacity",
-    "occupancy_rate": "Occupancy rate now",
-    "rolling_mean_1h": "Mean of last hour",
-    "lag_15min": "Free spots 15 min ago",
-    "lag_1h": "Free spots 1 h ago",
-    "lag_1w": "Same time last week",
     "temperature_c": "Temperature",
-    "precipitation_mm": "Precipitation",
-    "garage_code": "Garage",
+    "rain_mm": "Rain",
+    "is_holiday": "Public holiday",
 }
 
 
-def build_features(
-    history: pd.DataFrame,
-    horizon_min: int = FORECAST_HORIZON_MIN,
-    weather: pd.DataFrame | None = None,
-    until: pd.Timestamp | None = None,
-) -> pd.DataFrame:
-    """Turn raw occupancy history into one feature row per garage and 15-min slot.
+def build_table(history: pd.DataFrame) -> pd.DataFrame:
+    """Turn raw measurements into one row per garage per 15 minutes, plus the target.
 
     Args:
         history: Output of ``database.load_history`` (columns ``timestamp``,
             ``garage_id``, ``free_spots``, ``capacity``).
-        horizon_min: How far ahead the target lies (multiple of 15).
-        weather: Optional hourly weather (``weather_api.get_hourly_weather``);
-            adds ``temperature_c`` / ``precipitation_mm`` for the target hour.
-        until: Extend each garage's grid up to this time (UTC), e.g. "now"
-            when predicting and the latest measurement is a few minutes old.
 
     Returns:
-        DataFrame with ``timestamp`` (reference time t, UTC), ``target_time``,
-        ``garage_id``, all ``CALENDAR_FEATURES`` + ``STATE_FEATURES``
-        (+ ``WEATHER_FEATURES`` if weather given) and ``TARGET_COLUMN``.
-        Lags that reach before the start of the data are NaN.
+        DataFrame with ``time``, ``garage``, ``capacity``, ``free`` and
+        ``free_in_1h``. Slots without a measurement are NaN.
     """
-    if horizon_min % FEATURE_FREQ_MIN:
-        raise ValueError(f"horizon_min must be a multiple of {FEATURE_FREQ_MIN}")
-    if history.empty:
-        return pd.DataFrame(columns=["timestamp", "target_time", "garage_id", *CALENDAR_FEATURES, *STATE_FEATURES, TARGET_COLUMN])
+    parts = []
+    for garage, rows in history.groupby("garage_id"):
+        # The last measurement in every 15-minute slot. Empty slots stay as NaN rows, so
+        # "4 rows later" is always exactly 1 hour later, even next to a data gap.
+        slots = rows.set_index("timestamp")[["free_spots", "capacity"]].astype(float).resample(FREQ).last()
+        part = pd.DataFrame({
+            "time": slots.index.tz_convert(ZURICH_TZ),
+            "garage": garage,
+            "capacity": slots["capacity"].ffill().bfill().to_numpy(),
+            "free": slots["free_spots"].to_numpy(),
+        })
+        parts.append(part)
+    if not parts:
+        return pd.DataFrame(columns=["time", "garage", "capacity", "free", TARGET])
 
-    grid = _to_grid(history, until)
-    h = horizon_min // FEATURE_FREQ_MIN
-    week = 7 * 24 * 60 // FEATURE_FREQ_MIN
-    by_garage = grid.groupby("garage_id", sort=False)
+    table = pd.concat(parts, ignore_index=True).sort_values(["garage", "time"]).reset_index(drop=True)
+    # Target: free spaces 1 hour later in the same garage.
+    table[TARGET] = table.groupby("garage")["free"].shift(-STEPS_AHEAD)
+    return table
 
-    # --- What we know at reference time t ------------------------------------
-    grid["occupancy_rate"] = 1 - grid["free_now"] / grid["capacity"]
-    grid["lag_15min"] = by_garage["free_now"].shift(1)
-    grid["lag_1h"] = by_garage["free_now"].shift(4)
-    # Slots t-45min .. t, i.e. the last hour.
-    grid["rolling_mean_1h"] = by_garage["free_now"].transform(lambda s: s.rolling(4, min_periods=1).mean())
-    # Same time as the target, one week earlier: T - 7 days = t - (7 days - horizon).
-    grid["lag_1w"] = by_garage["free_now"].shift(week - h)
 
-    # --- Target: the real (not forward-filled) value at T ---------------------
-    grid[TARGET_COLUMN] = by_garage["free_raw"].shift(-h)
+def add_features(table: pd.DataFrame, garages: list[str], weather: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Add the feature columns to a table with ``time``, ``garage``, ``capacity`` and ``free``.
 
-    # --- Calendar of the target time (local Zurich time) ----------------------
-    grid["target_time"] = grid["timestamp"] + pd.Timedelta(minutes=horizon_min)
-    grid = grid.join(calendar_features(grid["target_time"]))
-
+    Args:
+        garages: All garage names; the position in this list is the ``garage_id`` number.
+        weather: Optional hourly weather (``weather_api.get_hourly_weather``).
+    """
+    table = table.copy()
+    table["hour"] = table["time"].dt.hour
+    table["weekday"] = table["time"].dt.day_of_week  # 0 = Monday
+    table["garage_id"] = table["garage"].map({name: number for number, name in enumerate(garages)})
+    holidays = zurich_holidays(tuple(sorted(set(table["time"].dt.year))))
+    table["is_holiday"] = table["time"].dt.date.isin(holidays).astype(int)
     if weather is not None:
-        grid = _join_weather(grid, weather)
-
-    return grid.drop(columns=["free_raw"])
-
-
-def calendar_features(times: pd.Series) -> pd.DataFrame:
-    """Calendar features for UTC timestamps, evaluated in Zurich local time."""
-    local = times.dt.tz_convert(ZURICH_TZ)
-    holiday_dates = zurich_holidays(tuple(sorted(set(local.dt.year))))
-    weekday = local.dt.day_of_week
-    return pd.DataFrame(
-        {
-            "hour": local.dt.hour,
-            "weekday": weekday,
-            "is_weekend": (weekday >= 5).astype(int),
-            "is_holiday": local.dt.date.isin(holiday_dates).astype(int),
-            "month": local.dt.month,
-        },
-        index=times.index,
-    )
+        hourly = weather.rename(columns={"time": "hour_time", "precipitation_mm": "rain_mm"})
+        table["hour_time"] = table["time"].dt.tz_convert("UTC").dt.floor("h")  # 14:15 -> 14:00
+        table = table.merge(hourly[["hour_time", *WEATHER_FEATURES]], on="hour_time", how="left")
+    return table
 
 
 def easter_sunday(year: int) -> date:
@@ -167,40 +130,3 @@ def zurich_holidays(years: tuple[int, ...]) -> frozenset[date]:
         for offset in (-2, 1, 39, 50):  # Good Friday, Easter Monday, Ascension, Whit Monday
             days.add(easter + timedelta(days=offset))
     return frozenset(days)
-
-
-def _to_grid(history: pd.DataFrame, until: pd.Timestamp | None) -> pd.DataFrame:
-    """Resample each garage onto a regular 15-min grid.
-
-    ``free_raw`` holds the last measurement inside each slot (NaN if none),
-    ``free_now`` additionally carries values forward over short gaps.
-    """
-    df = history.dropna(subset=["free_spots"]).copy()
-    df["slot"] = df["timestamp"].dt.floor(FREQ)
-    per_slot = df.sort_values("timestamp").groupby(["garage_id", "slot"], as_index=False).last()
-
-    frames = []
-    for garage_id, g in per_slot.groupby("garage_id", sort=False):
-        end = max(g["slot"].max(), until.floor(FREQ)) if until is not None else g["slot"].max()
-        slots = pd.date_range(g["slot"].min(), end, freq=FREQ)
-        g = g.set_index("slot").reindex(slots)
-        free_raw = g["free_spots"].astype(float)
-        frames.append(
-            pd.DataFrame(
-                {
-                    "timestamp": slots,
-                    "garage_id": garage_id,
-                    "free_raw": free_raw.to_numpy(),
-                    "free_now": free_raw.ffill(limit=MAX_FILL_SLOTS).to_numpy(),
-                    "capacity": g["capacity"].astype(float).ffill().bfill().to_numpy(),
-                }
-            )
-        )
-    return pd.concat(frames, ignore_index=True)
-
-
-def _join_weather(grid: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
-    """Add the weather of the target hour."""
-    w = weather.rename(columns={"time": "_weather_hour"})[["_weather_hour", *WEATHER_FEATURES]]
-    grid["_weather_hour"] = grid["target_time"].dt.floor("h")
-    return grid.merge(w, on="_weather_hour", how="left").drop(columns=["_weather_hour"])

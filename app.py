@@ -7,18 +7,25 @@ and dummy data in ``src/ui/backend.py``.
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
-from src.config import PARKING_DURATION_H
 from src.ml.predict import model_info
+from src.recommendation.candidates import COLUMNS
+from src.recommendation.mode_compare import compare_modes
+from src.recommendation.parking_score import best_garage, rank_garages
 from src.ui import backend
-from src.ui.charts import render_mode_comparison, render_occupancy_chart
+from src.ui.charts import render_mode_comparison
+from src.ui.forecast import render_forecast
+from src.ui.garage_cards import render_garage_cards
 from src.ui.map_view import render_garage_info, render_garage_table, render_legend, render_map
-from src.ui.navigation import recommended_route
-from src.ui.recommendation_card import build_recommendation, render_recommendation
+from src.ui.mode_cards import render_mode_cards
+from src.ui.priority import render_priority
 from src.ui.sidebar import render_sidebar
+from src.ui.styles import inject_styles
 
 st.set_page_config(page_title="Parkitunity", page_icon="🅿️", layout="wide")
+inject_styles()
 
 inputs = render_sidebar()
 departure = inputs["departure_time"]
@@ -35,79 +42,66 @@ origin, destination = inputs["origin"], inputs["destination"]
 if destination is None:
     st.info("Gib in der Seitenleiste ein Ziel ein, das gefunden wird – dann erscheint die Empfehlung.", icon="📍")
 
+priority = render_priority()
+
 with st.spinner("Berechne Prognosen …"):
-    ranked = backend.ranked_garages(
+    candidates = backend.candidates(
         destination.lat, destination.lon, departure.isoformat(),
         origin.lat if origin else None, origin.lon if origin else None,
-    ) if destination else []
-# Same garage as compare_modes picks for the car (scores do not depend on the filter).
-eligible = [r for r in ranked if r["garage"].hourly_rate_chf is None or r["garage"].hourly_rate_chf <= inputs["max_price_chf"]]
-best = eligible[0] if eligible else None
-best_id = best["garage"].id if best else None
+    ) if destination else pd.DataFrame(columns=COLUMNS)
+# Garages above the price limit are not ranked; they are only shown in grey.
+too_expensive = candidates["price_per_hour"] > inputs["max_price_chf"]
+ranking = rank_garages(candidates[~too_expensive], priority, inputs["max_walk_min"], inputs["enough_spots"])
+st.session_state["ranking"] = ranking
+best = best_garage(ranking)
+best_id = best["garage_id"] if best else None
+# All garages to show: the ranking first, then the ones above the price limit.
+shown = pd.concat([ranking, candidates[too_expensive]], ignore_index=True) if too_expensive.any() else ranking
 
 comparison = None
 if inputs["show_transit"] and destination and origin:
     with st.spinner("Vergleiche mit dem ÖV …"):
-        comparison = backend.mode_comparison(
-            origin.lat, origin.lon, destination.lat, destination.lon, departure.isoformat(), inputs["max_price_chf"]
-        )
+        transit = backend.transit(origin, destination, departure)
+    comparison = compare_modes(best, transit, inputs["parking_hours"], priority)
 
-# --- Top: recommendation ----------------------------------------------------------
+# --- Top: best garages, car or public transport ------------------------------------
 if destination:
-    render_recommendation(build_recommendation(best, comparison))
-    route = recommended_route(origin, destination, best, comparison)
-    if route is not None:
-        url, caption = route
-        st.link_button("Route in Google Maps öffnen", url, icon="🗺️")
-        st.caption(caption)
+    if best and best["walk_min"] > inputs["max_walk_min"]:
+        st.warning(f"Kein Parkhaus mit genügend freien Plätzen liegt höchstens {inputs['max_walk_min']} min zu Fuss vom Ziel – "
+                   f"der Vorschlag ist {best['walk_min']} min entfernt.", icon="🚶")
+    render_garage_cards()
+if comparison:
+    render_mode_cards(comparison, origin, destination, inputs["origin_query"], inputs["destination_query"],
+                      inputs["parking_hours"])
 
 # --- Middle: map + table ------------------------------------------------------------
-clicked_id = render_map(ranked, destination, best_id, inputs["max_price_chf"], origin)
+clicked_id = render_map(shown, destination, best_id, inputs["max_price_chf"], origin)
 render_legend()
-by_id = {r["garage"].id: r for r in ranked}
+by_id = {g["garage_id"]: g for g in shown.to_dict("records")}
 if clicked_id in by_id:
     render_garage_info(by_id[clicked_id], best_id, inputs["max_price_chf"])
-if ranked:
+if by_id:
     with st.expander("Alle Parkhäuser als Tabelle"):
-        render_garage_table(ranked, best_id, inputs["max_price_chf"])
+        render_garage_table(shown, best_id, inputs["max_price_chf"])
 
 # --- Bottom: charts -------------------------------------------------------------------
-if ranked:
-    # Follow the recommendation whenever the trip changes; keep a manual choice otherwise.
-    ids = [r["garage"].id for r in ranked]
-    context = (destination.lat, destination.lon, departure.isoformat(), inputs["max_price_chf"], inputs["origin_query"])
-    if st.session_state.get("_selection_context") != context or st.session_state.get("selected_garage_id") not in ids:
-        st.session_state["selected_garage_id"] = best_id or ids[0]
+if by_id:
+    # Follow the recommendation whenever the trip or the priority changes; keep a manual choice otherwise.
+    ids = list(by_id)
+    context = (destination.lat, destination.lon, departure.isoformat(), inputs["max_price_chf"],
+               inputs["origin_query"], priority, inputs["max_walk_min"], inputs["enough_spots"])
+    if st.session_state.get("_selection_context") != context or st.session_state.get("selected_garage") not in ids:
+        st.session_state["selected_garage"] = best_id or ids[0]
         st.session_state["_selection_context"] = context
     # A newly clicked garage on the map is also shown in the occupancy chart.
     if clicked_id in by_id and clicked_id != st.session_state.get("_last_map_click"):
-        st.session_state["selected_garage_id"] = clicked_id
+        st.session_state["selected_garage"] = clicked_id
     st.session_state["_last_map_click"] = clicked_id
 
-    left, right = st.columns([3, 2], gap="large") if comparison else (st.container(), None)
-    with left:
-        st.subheader("Belegung")
-        selected_id = st.selectbox(
-            "Parkhaus",
-            options=ids,
-            key="selected_garage_id",
-            format_func=lambda gid: backend.display_name(by_id[gid]["garage"]),
-            label_visibility="collapsed",
-        )
-        selected = by_id[selected_id]
-        at_garage = selected["arrival_at_garage"]
-        start, end = backend.forecast_window(at_garage)
-        history = backend.occupancy_history(selected_id)
-        forecast = backend.occupancy_forecast(selected_id, start.isoformat(), end.isoformat())
-        render_occupancy_chart(history, forecast, at_garage, selected["predicted_free"])
-        if not forecast.empty and history.empty:
-            st.caption("Für die letzten 24 h sind noch keine Messwerte gespeichert – nur die Prognose wird gezeigt.")
-    if right is not None:
-        with right:
-            st.subheader("Auto oder ÖV?")
-            render_mode_comparison(comparison)
-            st.caption(f"Auto: Fahrt + Parkplatzsuche + Fussweg; Kosten: {PARKING_DURATION_H:g} h Parkieren "
-                       f"+ km-Kosten. ÖV: inkl. Wartezeit; Ticketpreis vereinfacht (ZVV).")
+    render_forecast(by_id)
+if comparison:
+    st.subheader("Auto oder ÖV?")
+    render_mode_comparison(comparison)
 
 # --- Footer -----------------------------------------------------------------------------
 notes = ["Belegung: PLS Zürich via ParkenDD (CC-0)", "ÖV: transport.opendata.ch"]

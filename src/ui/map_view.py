@@ -18,7 +18,7 @@ import pydeck as pdk
 import streamlit as st
 
 from src.config import ZURICH_CENTER
-from src.models import Garage, Location
+from src.models import Location
 from src.ui import backend
 
 OVER_BUDGET_COLOR = "#898781"  # grey: more expensive than the user's limit
@@ -43,9 +43,9 @@ MIN_ZOOM, MAX_ZOOM = 8, 14  # 8 ≈ whole canton, 14 ≈ a few streets
 MAP_KEY = "garage_map"  # widget key of the map (it remembers the clicked garage)
 
 
-def is_over_budget(garage: Garage, max_price_chf: float) -> bool:
-    """True if the garage's hourly rate is known and above the user's limit."""
-    return garage.hourly_rate_chf is not None and garage.hourly_rate_chf > max_price_chf
+def is_over_budget(price_per_hour: float, max_price_chf: float) -> bool:
+    """True if the hourly price is above the user's limit (an unknown price, NaN, is not)."""
+    return price_per_hour > max_price_chf
 
 
 def marker_rows(location: Location, layers: list[tuple[str, int]], name: str) -> list[dict]:
@@ -68,7 +68,7 @@ def hex_to_rgba(color: str) -> list[int]:
 
 
 def map_data(
-    ranked: list[dict],
+    garages: pd.DataFrame,
     destination: Location | None,
     recommended_id: str | None,
     max_price_chf: float,
@@ -77,20 +77,24 @@ def map_data(
     """One row per dot: lat, lon, color, size (radius in pixels), name (tooltip), garage_id.
 
     Args:
-        ranked: Output of ``rank_garages`` (garage, predicted_free, ...).
+        garages: Rows of ``build_candidates`` or ``rank_garages``.
         destination: Drawn as a black-and-white target (None = no valid destination).
         recommended_id: This garage gets a bigger dot.
         max_price_chf: Garages above this hourly rate are grey.
         origin: Start point, drawn as a blue dot with a white ring (None = unknown).
     """
     rows = []
-    for r in ranked:
-        garage = r["garage"]
-        status = backend.availability(r["predicted_free"], garage.capacity)
-        color = OVER_BUDGET_COLOR if is_over_budget(garage, max_price_chf) else backend.STATUS_COLORS[status]
-        size = RECOMMENDED_SIZE_PX if garage.id == recommended_id else GARAGE_SIZE_PX
-        rows.append({"lat": garage.location.lat, "lon": garage.location.lon, "color": color, "size": size,
-                     "name": backend.display_name(garage), "garage_id": garage.id})
+    for g in garages.to_dict("records"):
+        status = backend.availability(g["free_at_arrival"])
+        over_budget = is_over_budget(g["price_per_hour"], max_price_chf)
+        rows.append({
+            "lat": g["lat"],
+            "lon": g["lon"],
+            "color": OVER_BUDGET_COLOR if over_budget else backend.STATUS_COLORS[status],
+            "size": RECOMMENDED_SIZE_PX if g["garage_id"] == recommended_id else GARAGE_SIZE_PX,
+            "name": backend.display_name(g["name"], g["garage_id"]),
+            "garage_id": g["garage_id"],
+        })
     # Start and destination come last, so they are drawn on top of the garages.
     if origin is not None:
         rows.extend(marker_rows(origin, START_MARKER, "Startpunkt"))
@@ -128,7 +132,7 @@ def fit_zoom(data: pd.DataFrame) -> float:
 
 
 def render_map(
-    ranked: list[dict],
+    garages: pd.DataFrame,
     destination: Location | None,
     recommended_id: str | None,
     max_price_chf: float,
@@ -138,7 +142,7 @@ def render_map(
 
     Returns the id of the garage the user clicked on (None = no garage clicked).
     """
-    data = map_data(ranked, destination, recommended_id, max_price_chf, origin)
+    data = map_data(garages, destination, recommended_id, max_price_chf, origin)
     view = pdk.ViewState(
         latitude=(data["lat"].min() + data["lat"].max()) / 2,
         longitude=(data["lon"].min() + data["lon"].max()) / 2,
@@ -148,6 +152,7 @@ def render_map(
     is_garage = data["garage_id"] != ""
 
     def dots(layer_id: str, rows: pd.DataFrame) -> pdk.Layer:
+        """One map layer with a dot per row."""
         return pdk.Layer(
             "ScatterplotLayer",
             id=layer_id,
@@ -171,11 +176,11 @@ def render_map(
     return clicked[0]["garage_id"] if clicked else None
 
 
-def render_garage_info(entry: dict, recommended_id: str | None, max_price_chf: float) -> None:
+def render_garage_info(garage: dict, recommended_id: str | None, max_price_chf: float) -> None:
     """Name and key numbers of the garage that was clicked on the map."""
-    row = garage_table([entry], recommended_id, max_price_chf).iloc[0]
+    row = garage_table(pd.DataFrame([garage]), recommended_id, max_price_chf).iloc[0]
     parts = [f"**{row['Parkhaus']}**", row["Verfügbarkeit"], f"{row['Frei (Prognose)']} frei (Prognose)"]
-    if row["CHF/h"] is not None and not pd.isna(row["CHF/h"]):
+    if not pd.isna(row["CHF/h"]):
         parts.append(f"CHF {row['CHF/h']:.2f}/h")
     parts.append(f"{row['Fussweg (min)']} min zu Fuss")
     if row["Hinweis"]:
@@ -183,34 +188,31 @@ def render_garage_info(entry: dict, recommended_id: str | None, max_price_chf: f
     st.info(" · ".join(parts), icon="📍")
 
 
-def garage_table(ranked: list[dict], recommended_id: str | None, max_price_chf: float) -> pd.DataFrame:
-    """The details that used to be in map popups: one row per garage, best first."""
+def garage_table(garages: pd.DataFrame, recommended_id: str | None, max_price_chf: float) -> pd.DataFrame:
+    """The details of the garages for the table below the map, in the given order."""
     rows = []
-    for r in ranked:
-        garage = r["garage"]
-        status = backend.availability(r["predicted_free"], garage.capacity)
-        if garage.id == recommended_id:
+    for g in garages.to_dict("records"):
+        if g["garage_id"] == recommended_id:
             note = "★ Empfehlung"
-        elif is_over_budget(garage, max_price_chf):
+        elif is_over_budget(g["price_per_hour"], max_price_chf):
             note = "über Preislimit"
         else:
             note = ""
-        rows.append(
-            {
-                "Parkhaus": backend.display_name(garage),
-                "Verfügbarkeit": backend.STATUS_LABELS[status],
-                "Frei (Prognose)": r["predicted_free"],
-                "CHF/h": garage.hourly_rate_chf,
-                "Fussweg (min)": round(r["walking_min"]),
-                "Gesamt (min)": round(r["total_min"]),
-                "Hinweis": note,
-            }
-        )
+        rows.append({
+            "Parkhaus": backend.display_name(g["name"], g["garage_id"]),
+            "Verfügbarkeit": backend.STATUS_LABELS[backend.availability(g["free_at_arrival"])],
+            "Frei (Prognose)": g["free_at_arrival"],
+            "CHF/h": g["price_per_hour"],
+            "Fussweg (min)": g["walk_min"],
+            "Gesamt (min)": round(g["drive_min"] + g["walk_min"]),
+            "Hinweis": note,
+        })
     return pd.DataFrame(rows)
 
 
-def render_garage_table(ranked: list[dict], recommended_id: str | None, max_price_chf: float) -> None:
-    st.dataframe(garage_table(ranked, recommended_id, max_price_chf), hide_index=True, width="stretch")
+def render_garage_table(garages: pd.DataFrame, recommended_id: str | None, max_price_chf: float) -> None:
+    """Show the table of all garages."""
+    st.dataframe(garage_table(garages, recommended_id, max_price_chf), hide_index=True, width="stretch")
 
 
 def _swatch(background: str, size_px: int = 10) -> str:

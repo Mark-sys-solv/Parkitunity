@@ -346,6 +346,7 @@ def parse_day(text: str) -> datetime:
 
 
 def main() -> None:
+    """Download, merge, save and import the history."""
     parser = argparse.ArgumentParser(description="Download historical occupancy of Zurich garages (ParkenDD).")
     parser.add_argument("--start", type=parse_day, help="first day YYYY-MM-DD (default: 12 months ago)")
     parser.add_argument("--end", type=parse_day, help="last day YYYY-MM-DD, inclusive (default: yesterday)")

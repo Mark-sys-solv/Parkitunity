@@ -9,6 +9,7 @@ data/raw/*
 data/processed/history.csv
 
 # Trained models (~12 MB, retrain with `python -m src.ml.train`)
+models/*.pkl
 models/*.pkl.gz
 
 # Python

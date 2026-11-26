@@ -35,7 +35,7 @@ RAW_DATA_DIR: Path = DATA_DIR / "raw"
 PROCESSED_DATA_DIR: Path = DATA_DIR / "processed"
 MODELS_DIR: Path = ROOT_DIR / "models"
 DB_PATH: Path = Path(os.getenv("PARKITUNITY_DB_PATH", DATA_DIR / "parkitunity.db"))
-MODEL_PATH: Path = MODELS_DIR / "occupancy_model.pkl.gz"  # pickle, gzip-compressed
+MODEL_PATH: Path = MODELS_DIR / "model.pkl"  # saved with joblib
 DOCS_DIR: Path = ROOT_DIR / "docs"
 # Synthetic development data (see notebooks/generate_synthetic_data.py). Never mix with real data.
 SYNTHETIC_DB_PATH: Path = DATA_DIR / "synthetic.db"
@@ -76,51 +76,54 @@ ZURICH_TZ: str = "Europe/Zurich"
 ROAD_FACTOR: float = 1.4  # straight-line distance -> approx. road distance
 AVG_CITY_SPEED_KMH: float = 25.0
 
-# Walking from the garage to the destination: straight-line distance at 5 km/h.
-WALKING_SPEED_KMH: float = 5.0
-WALKING_DETOUR_FACTOR: float = 1.0  # 1.0 = straight line; ~1.3 would model detours along streets
+# Walking from the garage to the destination: straight-line distance x detour factor, rounded up.
+WALKING_SPEED_KMH: float = 4.5
+WALKING_DETOUR_FACTOR: float = 1.3  # streets are longer than the straight line
 
 # --- Machine learning ----------------------------------------------------------
-FORECAST_HORIZON_MIN: int = 30  # the model predicts free spots this many minutes ahead
+FORECAST_HORIZON_MIN: int = 60  # the model predicts free spots this many minutes ahead
+FORECAST_CURVE_HOURS: int = 6  # length of the forecast chart
+FORECAST_CURVE_MAX_HOURS: int = 24  # ... if the arrival is later than that
 FEATURE_FREQ_MIN: int = 15  # time grid of the features (history is resampled to 15 min)
-TEST_FRACTION: float = 0.2  # last 20 % of the time range is used for testing
+VALIDATION_DAYS: int = 14  # the 2 weeks before the test period: compare the models
+TEST_DAYS: int = 14  # the newest 2 weeks: final result of the best model, used once
 
 # --- Recommendation: assumptions -------------------------------------------------
 # All numbers below are rough, documented assumptions. Change them here – the
 # recommendation code (src/recommendation/) reads them from this file only.
 
-# Search penalty: extra minutes to find a spot when a garage is nearly full.
-# 0 min with more than HIGH free spots, MAX min with LOW or fewer, linear in between.
-SEARCH_PENALTY_MAX_MIN: float = 10.0
-SEARCH_PENALTY_LOW_FREE: int = 10
-SEARCH_PENALTY_HIGH_FREE: int = 50
-
-# Garage score = weighted sum of three sub-scores in [0, 1] (higher is better).
-# Weights are normalised to sum to 1. With the defaults below, roughly
-# 1 CHF/h more ≈ 3 min longer ≈ 7 fewer free spots.
-SCORE_WEIGHTS: dict[str, float] = {
-    "time": 0.5,  # total time = drive + search + walk
-    "availability": 0.3,  # predicted free spots
-    "price": 0.2,  # hourly rate
+# Ranking: weights of the three criteria for every priority ("Was ist dir wichtig?").
+# travel = drive + walk (less is better), price = CHF/h (less is better),
+# spots = free spots at arrival (more is better). The weights of a priority sum to 1.
+PRIORITY_WEIGHTS: dict[str, dict[str, float]] = {
+    "fastest": {"travel": 0.7, "price": 0.15, "spots": 0.15},
+    "cheapest": {"travel": 0.15, "price": 0.7, "spots": 0.15},
+    "most_spots": {"travel": 0.15, "price": 0.15, "spots": 0.7},
+    "balanced": {"travel": 1 / 3, "price": 1 / 3, "spots": 1 / 3},
 }
-# Sub-scores use absolute scales, so a garage's score does not depend on which
-# other garages are in the list (e.g. after applying the price filter).
-SCORE_TIME_WORST_MIN: float = 60.0  # total time at which the time score reaches 0
-SCORE_FREE_SATURATION: int = 50  # more free spots than this do not improve the score
-SCORE_PRICE_WORST_CHF_PER_H: float = 8.0  # hourly rate at which the price score reaches 0
-ASSUMED_RATE_IF_UNKNOWN_CHF_PER_H: float = 5.0  # used for scoring/costs if a garage has no price
+DEFAULT_PRIORITY: str = "balanced"
+MIN_FREE_AT_ARRIVAL: int = 10  # garages with fewer expected free spots go to the end of the ranking
+# Defaults and ranges (min, max, step) of the two sliders in the sidebar.
+DEFAULT_MAX_WALK_MIN: int = 20  # garages with a longer walk go to the end of the ranking
+MAX_WALK_RANGE: tuple[int, int, int] = (5, 60, 5)
+DEFAULT_ENOUGH_SPOTS: int = 200  # more free spots than this do not improve the score
+ENOUGH_SPOTS_RANGE: tuple[int, int, int] = (50, 500, 50)
 
-# Car costs.
-PARKING_DURATION_H: float = 2.0  # assumed length of stay for the parking fee
-INCLUDE_CAR_KM_COSTS: bool = True
-# Variable costs per km (fuel, wear) – what matters when you already own a car.
-# The full TCS cost incl. depreciation and insurance would be much higher (~0.70 CHF/km).
-CAR_COST_PER_KM_CHF: float = 0.20
-# Costs cover the way there AND back (parking implies returning; transit needs a
-# return ticket). Times are always one way.
-ROUND_TRIP: bool = True
+# Traffic light of the free spots (cards, map and forecast).
+FREE_GREEN_FROM: int = 50  # green from this number on
+FREE_ORANGE_FROM: int = 10  # orange from this number on, red below
+CARDS_SHOWN: int = 3  # how many garages are shown as cards
 
-# Public transport: SIMPLIFIED ZVV single tickets (adult, 2nd class, approx.).
+ASSUMED_RATE_IF_UNKNOWN_CHF_PER_H: float = 5.0  # used for ranking/costs if a garage has no price
+
+# Costs of the trip there AND back (times are always one way).
+# Car: 2 x km x COST_PER_KM_CHF + hourly rate x length of stay.
+# PLACEHOLDER: rough guess for fuel and wear. 0 = only the parking fee counts.
+COST_PER_KM_CHF: float = 0.20
+DEFAULT_PARKING_HOURS: float = 2.0  # assumed length of stay
+PARKING_HOURS_RANGE: tuple[float, float, float] = (0.5, 8.0, 0.5)  # slider: min, max, step
+
+# PLACEHOLDER – public transport: SIMPLIFIED ZVV single tickets (adult, 2nd class, approx.).
 # Real fares depend on zones, not distance – verify on zvv.ch before relying on them.
 # (max. straight-line distance in km, price in CHF), checked in order.
 TRANSIT_FARES_CHF: list[tuple[float, float]] = [
@@ -131,15 +134,57 @@ TRANSIT_FARES_CHF: list[tuple[float, float]] = [
     (float("inf"), 13.80),  # further: rough upper value
 ]
 
-# Decision car vs. public transport: time is converted to money and added to
-# the costs ("generalised costs"); the cheaper mode wins.
-VALUE_OF_TIME_CHF_PER_H: float = 25.0  # rough assumption for leisure trips
-DECISION_TIE_CHF: float = 1.0  # smaller differences count as a tie -> public transport (no parking stress)
+# Decision car vs. public transport: weights of travel time and costs per priority
+# (1/0 = only the time counts, 0/1 = only the costs count).
+MODE_WEIGHTS: dict[str, dict[str, float]] = {
+    "fastest": {"time": 1.0, "cost": 0.0},
+    "cheapest": {"time": 0.0, "cost": 1.0},
+    "most_spots": {"time": 0.5, "cost": 0.5},
+    "balanced": {"time": 0.5, "cost": 0.5},
+}
 
 # ParkenDD provides no prices. Until a real price source exists, garages get
-# PLACEHOLDER hourly rates (parking_api._PLACEHOLDER_RATES_CHF). Set to false
+# PLACEHOLDER hourly rates (PLACEHOLDER_RATES_CHF below). Set to false
 # once real prices are available.
 USE_PLACEHOLDER_PRICES: bool = True
+# PLACEHOLDER hourly rates in CHF – rough guesses, NOT real prices.
+PLACEHOLDER_RATES_CHF: dict[str, float] = {
+    "zuerichparkhausaccu": 2.0,
+    "zuerichparkhausalbisriederplatz": 2.5,
+    "zuerichparkhausbleicherweg": 4.5,
+    "zuerichparkhauscentereleven": 2.0,
+    "zuerichparkhauscityparking": 4.0,
+    "zuerichparkhauscityport": 3.0,
+    "zuerichparkhauscrowneplaza": 3.5,
+    "zuerichparkhausdorflinde": 2.0,
+    "zuerichparkhausfeldegg": 3.5,
+    "zuerichparkhausglobus": 5.0,
+    "zuerichparkhaushardauii": 2.0,
+    "zuerichparkhaushauptbahnhof": 6.0,
+    "zuerichparkhaushohepromenade": 4.0,
+    "zuerichparkhausjelmoli": 5.0,
+    "zuerichparkhausjungholz": 2.0,
+    "zuerichparkhausmaxbillplatz": 2.5,
+    "zuerichparkhausmessezuerichag": 3.0,
+    "zuerichparkhausnordhaus": 2.5,
+    "zuerichparkhausoctavo": 2.5,
+    "zuerichparkhausopéra": 4.5,
+    "zuerichparkhauspwest": 2.5,
+    "zuerichparkhausparkhyatt": 5.0,
+    "zuerichparkhausparkside": 3.0,
+    "zuerichparkhauspfingstweid": 2.5,
+    "zuerichparkhausstampfenbach": 3.5,
+    "zuerichparkhaustalgarten": 4.0,
+    "zuerichparkhaususznord": 3.5,
+    "zuerichparkhausuniirchel": 2.0,
+    "zuerichparkhausurania": 4.5,
+    "zuerichparkhausutoquai": 4.0,
+    "zuerichparkhauszueri11shopping": 2.0,
+    "zuerichparkhauszuerichhorn": 3.5,
+    "zuerichparkplatztheater11": 2.5,
+    "zuerichparkplatzuszsued": 3.5,
+}
+PLACEHOLDER_DEFAULT_RATE_CHF: float = 3.5  # garages that are not in the list
 
 # If true, the app skips live parking data entirely. If false (default), live
 # data is used and dummy data only serves as a fallback when the API fails.

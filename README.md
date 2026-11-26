@@ -36,18 +36,18 @@ python -m src.ml.train                   # train the occupancy model (see below)
 ```
 Sidebar: start point · destination (addresses, found via Nominatim) · departure time · max. price/h ·
          public transport toggle
-Top:     recommendation card ("Nimm den ÖV – 8 min schneller" / "Fahr zu Parkhaus X – ~45 Plätze frei")
-         + button "Route in Google Maps öffnen" (driving to the garage, or transit to the destination)
-Middle:  map (st.map) – garages coloured by predicted availability, recommendation = bigger dot,
+Top:     "Was ist dir wichtig?" (priority) · top 3 garages as cards · car and public transport side by side with
+         savings and buttons to Google Maps (driving to the garage, transit to the destination)
+Middle:  map (st.pydeck_chart) – garages coloured by predicted availability, recommendation = bigger dot,
          destination = black dot; details of all garages in a table below
-Bottom:  last 24 h + forecast for the selected garage · car vs. public transport (time, cost)
+Bottom:  forecast for the selected garage (next 6 h, with the arrival) · car vs. public transport as bars
 ```
 
 | File | Content |
 |---|---|
 | `app.py` | Layout only |
 | `src/ui/backend.py` | All backend calls, cached with `st.cache_data` |
-| `src/ui/sidebar.py`, `map_view.py`, `charts.py`, `recommendation_card.py` | UI components (`st.map`, `st.line_chart`, `st.bar_chart` – no extra packages) |
+| `src/ui/sidebar.py`, `priority.py`, `map_view.py`, `charts.py`, `mode_cards.py`, `forecast.py` | UI components (`st.radio`, `st.pydeck_chart`, `st.altair_chart`, `st.vega_lite_chart`; pydeck and Altair come with Streamlit) |
 
 **Placeholders still in use** (each is one switch, the return formats are final):
 
@@ -57,33 +57,44 @@ Bottom:  last 24 h + forecast for the selected garage · car vs. public transpor
 
 ## Recommendation logic
 
-The time a user enters is the **departure time**. For every garage:
+The time a user enters is the **departure time**. `build_candidates` makes one row per garage:
 
 ```
-depart ──drive──▶ garage ──search──▶ park ──walk──▶ destination
-free spots = predict(garage, departure + drive)
-search     = 0 min (> 50 free) … +10 min (≤ 10 free)
-score      = weighted time / availability / price  → full or too expensive garages are dropped
+arrival_time    = departure + drive_min                        (different for every garage)
+free_at_arrival = predict_free(garage, arrival_time)
+walk_min        = straight line x 1.3 at 4.5 km/h, rounded up
 ```
 
-`compare_modes` takes the best garage and the best public transport connection (incl. waiting
-time), converts time into money (25 CHF/h) and adds it to the costs (round trip); the cheaper
-total wins, near-ties go to public transport. If the transit API is down, only the car is
-evaluated. **All assumptions** (speeds, weights, fares, value of time, …) are commented
+`rank_garages` scales travel time (drive + walk), price per hour and free spots to 0–1 (min-max) and
+adds them up with the weights of the chosen priority ("Was ist dir wichtig?": fastest, cheapest,
+most_spots, balanced). Two sliders: garages further than the longest acceptable walk (default 20 min) come
+near the end, and more than "enough" free spots (default 200) do not improve the score. Garages with fewer than 10 expected free spots come last. The 0–1 scale only uses
+suitable garages (close enough, enough spots). Garages above the
+price limit are not ranked and only shown in grey.
+
+`compare_modes` compares rank 1 of this ranking with the next public transport connection:
+
+```
+car:     time = drive + walk             costs = 2 x km x cost per km + price per hour x length of stay
+transit: time = waiting + travel time    costs = 2 x ticket (simplified)
+```
+
+The priority decides: fastest = shorter time, cheapest = lower costs, otherwise both count half (as shares
+of the sum). With a tie or without transit data nothing is recommended. **All assumptions** (speeds, weights, fares, cost per km, …) are commented
 constants in [src/config.py](src/config.py) under "Recommendation: assumptions".
 
 ## Occupancy forecast (ML)
 
-The model predicts the free spots of each garage **30 minutes ahead** from the current
-occupancy, its recent trend, the value at the same time last week and calendar features
-(hour, weekday, Zurich holidays, …). Details and results: [docs/model_report.md](docs/model_report.md).
+The model answers: **how many spaces will be free in this garage in 1 hour?** (regression, target
+`free_in_1h`). The table has one row per garage per 15 minutes; features are `free`, `hour`, `weekday`,
+`garage_id` and `capacity` (optional: weather, holidays). Results: [docs/model_report.md](docs/model_report.md).
 
 The model is trained on **historical data only** (see "Data sources"): download it once, then train.
 
 ```bash
 python -m src.data.download_history             # -> history.csv + data/parkitunity.db (several hours)
 python -m src.ml.train                          # train on the real history (data/parkitunity.db)
-python -m src.ml.train --weather                # also use temperature/precipitation (Open-Meteo)
+python -m src.ml.train --weather --holiday      # also use weather (Open-Meteo) and public holidays
 ```
 
 For quick experiments without downloading, there is **synthetic development data**
@@ -91,14 +102,18 @@ For quick experiments without downloading, there is **synthetic development data
 
 ```bash
 python notebooks/generate_synthetic_data.py     # -> data/synthetic.db (8 weeks, real garage ids)
-python -m src.ml.train --db data/synthetic.db   # -> models/occupancy_model.pkl.gz + docs/
+python -m src.ml.train --db data/synthetic.db   # -> models/model.pkl + docs/
 PARKITUNITY_DB_PATH=data/synthetic.db streamlit run app.py   # app shows a "synthetic" warning
 ```
 
-Training compares two baselines ("same time last week", "stays the same") with a Random Forest
-and Gradient Boosting on the last 20 % of the period (time-based split), prints MAE/RMSE,
-saves the feature importance plot and report to `docs/` and the best model to `models/`
-(git-ignored, retrain locally in < 1 min).
+The data is split **by time** (train = oldest, validation = 2 weeks, test = newest 2 weeks; never
+shuffled). Five kinds of scikit-learn regressors are compared on the validation set by MAE; only the
+best one is tested, once, next to the baseline "same as now". The tested model is saved with `joblib`
+to `models/` (git-ignored, training takes about 1 min), the report to `docs/`. `joblib` is installed
+together with scikit-learn.
+
+For arrivals other than 1 hour ahead, `predict_free` uses provisional rules (see the docstring of
+`src/ml/predict.py`); the group still has to decide on this.
 
 ## Data sources
 
@@ -109,7 +124,7 @@ saves the feature importance plot and report to `docs/` and the best model to `m
 | Public transport | [transport.opendata.ch](https://transport.opendata.ch) | Car vs. public transport |
 | Weather (optional) | [Open-Meteo](https://open-meteo.com) | Optional model features |
 | Address search | [Nominatim](https://nominatim.openstreetmap.org) – © OpenStreetMap contributors (ODbL) | Start point and destination → coordinates |
-| Navigation | [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started) (link only, no API key) | "Route in Google Maps öffnen" |
+| Navigation | [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started) (link only, no API key) | "Autoroute öffnen" / "ÖV-Route öffnen" |
 
 **Address search (Nominatim):** we follow the
 [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/) – our own
@@ -156,11 +171,14 @@ docs/                   Documentation, reports
 
 | Function | Module | Returns |
 |---|---|---|
-| `predict(garage_id: str, arrival_time: datetime) -> int` | `src/ml/predict.py` | Predicted free spots (model ≤ 30 min ahead, typical week beyond) |
-| `build_features(history) -> DataFrame` | `src/ml/features.py` | Feature rows per garage and 15-min slot (shared by training and prediction) |
+| `predict_free(garage_id, timestamps) -> array` | `src/ml/predict.py` | Predicted free spots, the only source of forecasts (model for 1 h ahead, line from now until then, typical week beyond) |
+| `forecast_curve(garage_id) -> DataFrame` | `src/ml/predict.py` | `timestamp`, `free_pred` for the next 6 h in 15-min steps (via `predict_free`) |
+| `build_table(history) -> DataFrame` | `src/ml/features.py` | One row per garage per 15 min, with target `free_in_1h` |
+| `add_features(table, garages) -> DataFrame` | `src/ml/features.py` | Adds the features (shared by training and prediction) |
 | `get_hourly_weather(start, end) -> DataFrame` | `src/data/weather_api.py` | Hourly temperature/precipitation (past and forecast) |
-| `compare_modes(origin, destination, departure_time, max_price=None) -> dict` | `src/recommendation/mode_compare.py` | `{"car": {...}, "transit": {...}, "recommendation": "car" \| "transit" \| None, "reason": str}` (fields: `src/models.py`) |
-| `rank_garages(destination, departure_time, max_price=None, origin=None) -> list[dict]` | `src/recommendation/parking_score.py` | Usable garages (free spots > 0, within price), best first, with drive/search/walk/total minutes |
+| `compare_modes(best, transit, parking_hours, priority) -> dict` | `src/recommendation/mode_compare.py` | `{"car": {...}, "transit": {...}, "recommendation": "car" \| "transit" \| None}` (fields: `src/models.py`) |
+| `build_candidates(start, ziel, departure=None) -> DataFrame` | `src/recommendation/candidates.py` | One row per garage: live data, travel times, price, forecast at arrival |
+| `rank_garages(candidates, priority) -> DataFrame` | `src/recommendation/parking_score.py` | Same rows sorted, with `score` and `rank` |
 | `fetch_occupancy() -> list[dict]` | `src/data/parking_api.py` | Raw occupancy per garage: `garage_id`, `name`, `free_spots`, `capacity`, `timestamp` (UTC), `lat`, `lon` |
 | `fetch_garages() -> list[Garage]` | `src/data/parking_api.py` | Garages for the app (cached 60 s, dummy fallback) |
 | `get_transit_options(origin, destination, departure_time) -> dict \| None` | `src/data/transit_api.py` | Best ÖV connection: `duration_min`, `transfers`, `departure`, `arrival`, `sections` (cached 5 min) |
@@ -168,7 +186,7 @@ docs/                   Documentation, reports
 | `geocode(address) -> (lat, lon) \| None` | `src/data/geocoding.py` | Coordinates of an address in Switzerland (Nominatim, cached, max. 1 request/s) |
 | `load_history(garage_id=None, since=None) -> DataFrame` | `src/data/database.py` | Historical occupancy from SQLite |
 
-Places can be given as an address string, a `(lat, lon)` tuple or a `Location`.
+For transit connections, places can be given as an address string, a `(lat, lon)` tuple or a `Location`.
 
 Changing one of these signatures? Tell the team and update `tests/test_interfaces.py`.
 

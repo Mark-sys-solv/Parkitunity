@@ -41,8 +41,8 @@ def _isolate(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tm
     parking_api.fetch_garages.cache_clear()
     transit_api._fetch_best_connection.cache_clear()
     weather_api._fetch.cache_clear()
-    predict._estimate.cache_clear()
-    predict._load_bundle.cache_clear()
+    predict._history.cache_clear()
+    predict._load_bundle.clear()
     predict._is_synthetic.cache_clear()
     st.cache_data.clear()  # e.g. geocoding results
     monkeypatch.setattr(http_utils, "_sleep", lambda s: None)
@@ -50,7 +50,7 @@ def _isolate(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(parking_api.config, "USE_DUMMY_DATA", False)
     # Never read the real database or model in tests.
     monkeypatch.setattr(predict, "DB_PATH", tmp_path / "no-real-data.db")
-    monkeypatch.setattr(predict, "MODEL_PATH", tmp_path / "no-model.pkl.gz")
+    monkeypatch.setattr(predict, "MODEL_PATH", tmp_path / "no-model.pkl")
     if request.node.get_closest_marker("live") is None:
 
         def _blocked(*args: Any, **kwargs: Any) -> None:

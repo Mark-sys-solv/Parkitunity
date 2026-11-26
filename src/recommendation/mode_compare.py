@@ -1,192 +1,121 @@
+# AI citation: this file was written with Claude (Anthropic).
 """Compare driving + parking with public transport for one trip.
 
-- Car: the best garage from ``rank_garages``; total time = drive + search + walk,
-  cost = parking fee (+ variable km costs).
-- Public transport: the best connection from ``transit_api``; total time =
-  waiting for the first departure + travel time, cost = simplified ZVV fare.
-- Decision: time is converted to money (``VALUE_OF_TIME_CHF_PER_H``) and added
-  to the costs; the mode with the lower total wins, near-ties go to public
-  transport. A short German reason is returned for the UI.
+- Car: rank 1 of the ranking; time = drive + walk,
+  costs = 2 x drive_km x costs per km + hourly rate x length of stay.
+- Public transport: the next connection; time = waiting + travel time,
+  costs = simplified ticket there and back.
+- Decision: depends on the priority, see ``config.MODE_WEIGHTS``.
 
-If the transit API does not answer, only the car is evaluated (with a note).
-All assumptions live in ``src/config.py``.
+Everything except ``transit_option`` (asks the API) is pure calculation.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime
+
+import pandas as pd
 
 from src import config
 from src.data import routing, transit_api
-from src.data.geocoding import parse_coordinates
 from src.models import CarOption, Location, ModeComparison, TransitOption
-from src.recommendation.parking_score import rank_garages
 
-Place = str | Location | tuple[float, float]
-_TZ = ZoneInfo(config.ZURICH_TZ)
+NO_TRANSIT = TransitOption(available=False, total_min=None, wait_min=None, cost_chf=None, transfers=None)
 
 
-def compare_modes(
-    origin: Place,
-    destination: Place,
-    departure_time: datetime,
-    max_price: float | None = None,
-) -> ModeComparison:
-    """Compare car (incl. parking) and public transport.
-
-    Args:
-        origin: Start – address/station name, ``"lat,lon"``, (lat, lon) or Location.
-        destination: Destination, same formats.
-        departure_time: When the trip starts (naive = Zurich time).
-        max_price: Maximum hourly parking rate the driver accepts (CHF/h).
-
-    Returns:
-        ``{"car": CarOption, "transit": TransitOption,
-        "recommendation": "car" | "transit" | None, "reason": str}`` –
-        see ``src/models.py`` for the fields. ``recommendation`` is None only
-        if neither a garage nor a connection is available.
-
-    Raises:
-        ValueError: if ``origin`` or ``destination`` is an address that cannot be found.
-    """
-    departure = _aware(departure_time)
-    origin_loc, dest_loc = _to_location(origin), _to_location(destination)
-
-    ranked = rank_garages(dest_loc, departure, max_price=max_price, origin=origin_loc)
-    car = car_option(ranked[0] if ranked else None, origin_loc, departure)
-    transit = transit_option(_transit_place(origin, origin_loc), _transit_place(destination, dest_loc),
-                             departure, routing.haversine_km(origin_loc, dest_loc))
-    recommendation, reason = decide(car, transit)
-    return {"car": car, "transit": transit, "recommendation": recommendation, "reason": reason}
-
-
-def car_option(best: dict | None, origin: Location, departure: datetime) -> CarOption:
-    """Times and costs for driving to the ``best`` garage (an entry of ``rank_garages``)."""
+def car_option(best: dict | None, parking_hours: float) -> CarOption:
+    """Time and costs for driving to the garage ``best`` (a row of the ranking as dict)."""
     if best is None:
-        return CarOption(
-            available=False, total_min=None, drive_min=None, search_min=None, walk_min=None,
-            cost_chf=None, parking_cost_chf=None, km_cost_chf=None, parking_garage_id=None,
-            predicted_free=None, arrival=None,
-        )
-    garage = best["garage"]
-    trips = 2 if config.ROUND_TRIP else 1
-    rate = garage.hourly_rate_chf if garage.hourly_rate_chf is not None else config.ASSUMED_RATE_IF_UNKNOWN_CHF_PER_H
-    parking = rate * config.PARKING_DURATION_H
-    km = routing.get_drive_distance_km(origin, garage.location) * trips if config.INCLUDE_CAR_KM_COSTS else 0.0
-    km_cost = km * config.CAR_COST_PER_KM_CHF
+        return CarOption(available=False, total_min=None, cost_chf=None, garage=None)
+    rate = best["price_per_hour"]
+    if pd.isna(rate):
+        rate = config.ASSUMED_RATE_IF_UNKNOWN_CHF_PER_H
+    cost = 2 * best["drive_km"] * config.COST_PER_KM_CHF + rate * parking_hours
     return CarOption(
         available=True,
-        total_min=round(best["total_min"], 1),
-        drive_min=round(best["drive_min"], 1),
-        search_min=round(best["search_min"], 1),
-        walk_min=round(best["walking_min"], 1),
-        cost_chf=round(parking + km_cost, 2),
-        parking_cost_chf=round(parking, 2),
-        km_cost_chf=round(km_cost, 2),
-        parking_garage_id=garage.id,
-        predicted_free=best["predicted_free"],
-        arrival=departure + timedelta(minutes=best["total_min"]),
+        total_min=round(best["drive_min"] + best["walk_min"]),
+        cost_chf=round(cost, 2),
+        garage=best,
     )
 
 
-def transit_option(origin: Place, destination: Place, departure: datetime, distance_km: float) -> TransitOption:
-    """Best connection departing at or after ``departure``; unavailable if the API fails."""
-    conn = transit_api.get_transit_options(origin, destination, departure)
-    if conn is None:
-        return TransitOption(
-            available=False, total_min=None, wait_min=None, duration_min=None,
-            cost_chf=None, transfers=None, departure=None, arrival=None,
-        )
-    wait = max(0.0, (conn["departure"] - departure).total_seconds() / 60)
-    total = max(conn["duration_min"], (conn["arrival"] - departure).total_seconds() / 60)
-    trips = 2 if config.ROUND_TRIP else 1
+def transit_option(origin: Location, destination: Location, departure: datetime) -> TransitOption:
+    """Next connection departing at or after ``departure``; ``NO_TRANSIT`` if the API fails."""
+    connection = transit_api.get_transit_options(origin, destination, departure)
+    if connection is None:
+        return NO_TRANSIT
+    wait = max(0.0, (connection["departure"] - departure).total_seconds() / 60)
+    total = max(connection["duration_min"], (connection["arrival"] - departure).total_seconds() / 60)
     return TransitOption(
         available=True,
-        total_min=round(total, 1),
-        wait_min=round(wait, 1),
-        duration_min=round(conn["duration_min"], 1),
-        cost_chf=round(transit_fare(distance_km) * trips, 2),
-        transfers=conn["transfers"],
-        departure=conn["departure"],
-        arrival=conn["arrival"],
+        total_min=round(total),
+        wait_min=round(wait),
+        cost_chf=round(2 * transit_fare(routing.haversine_km(origin, destination)), 2),
+        transfers=connection["transfers"],
     )
 
 
 def transit_fare(distance_km: float) -> float:
-    """Simplified ZVV single ticket for a straight-line distance (see config)."""
+    """Simplified single ticket for a straight-line distance (placeholder, see config)."""
     for max_km, price in config.TRANSIT_FARES_CHF:
         if distance_km <= max_km:
             return price
     return config.TRANSIT_FARES_CHF[-1][1]
 
 
-def decide(car: CarOption, transit: TransitOption) -> tuple[str | None, str]:
-    """Pick the mode with the lower generalised cost and explain why (German)."""
-    if not car["available"] and not transit["available"]:
-        return None, ("Keine Empfehlung möglich: kein Parkhaus mit freien Plätzen gefunden "
-                      "und keine ÖV-Verbindung abrufbar.")
-    if not transit["available"]:
-        return "car", "Nur Auto-Empfehlung: Die ÖV-Verbindungen konnten gerade nicht abgefragt werden."
-    if not car["available"]:
-        return "transit", "Kein passendes Parkhaus mit freien Plätzen – der ÖV ist die einzige Option."
+def decide(car: CarOption, transit: TransitOption, priority: str) -> str | None:
+    """The better mode for the priority: "car", "transit" or ``None`` (tie or missing data).
 
-    car_total, transit_total = generalised_cost(car), generalised_cost(transit)
-    if abs(car_total - transit_total) < config.DECISION_TIE_CHF:
-        return "transit", "Beide etwa gleich gut – der ÖV erspart dir die Parkplatzsuche."
-
-    winner = "transit" if transit_total < car_total else "car"
-    loser_opt, winner_opt = (car, transit) if winner == "transit" else (transit, car)
-    return winner, _reason(
-        "Der ÖV" if winner == "transit" else "Das Auto",
-        minutes_saved=loser_opt["total_min"] - winner_opt["total_min"],
-        chf_saved=loser_opt["cost_chf"] - winner_opt["cost_chf"],
-    )
-
-
-def generalised_cost(option: CarOption | TransitOption) -> float:
-    """Costs + time converted to CHF.
-
-    Costs cover the round trip if ``ROUND_TRIP``, so the (one-way) time is
-    counted twice as well – both directions are assumed to take about as long.
+    Time and costs have different units, so each is turned into a share: e.g.
+    20 min (car) and 30 min (transit) become 0.4 and 0.6. Less is better.
     """
-    trips = 2 if config.ROUND_TRIP else 1
-    return option["cost_chf"] + trips * option["total_min"] / 60 * config.VALUE_OF_TIME_CHF_PER_H
+    if not car["available"] or not transit["available"]:
+        return None
+    weights = config.MODE_WEIGHTS[priority]
+    car_share = (
+        weights["time"] * _share(car["total_min"], transit["total_min"])
+        + weights["cost"] * _share(car["cost_chf"], transit["cost_chf"])
+    )
+    # The two shares sum to 1, so 0.5 is a tie (rounded, because of floating point errors).
+    if round(car_share, 6) == 0.5:
+        return None
+    return "car" if car_share < 0.5 else "transit"
 
 
-def _reason(subject: str, minutes_saved: float, chf_saved: float) -> str:
-    """One sentence from the winner's point of view (minutes one way, CHF as compared)."""
-    faster, cheaper = round(minutes_saved), round(chf_saved, 2)
-    if faster >= 1:
-        if cheaper >= 0.5:
-            return f"{subject} ist {faster} min schneller und CHF {cheaper:.2f} günstiger."
-        if cheaper > -0.5:
-            return f"{subject} ist {faster} min schneller bei etwa gleichen Kosten."
-        return (f"{subject} ist {faster} min schneller – die CHF {-cheaper:.2f} Mehrkosten lohnen sich "
-                f"bei einem Zeitwert von {config.VALUE_OF_TIME_CHF_PER_H:.0f} CHF/h.")
-    if cheaper >= 0.5:
-        slower = f" und nur {-faster} min langsamer" if faster <= -1 else ""
-        return f"{subject} ist CHF {cheaper:.2f} günstiger{slower}."
-    return f"{subject} ist insgesamt die bessere Wahl."
+def _share(value: float, other: float) -> float:
+    """``value`` as a share of both values together (0.5 if both are 0)."""
+    total = value + other
+    return 0.5 if total == 0 else value / total
 
 
-def _to_location(place: Place) -> Location:
-    if isinstance(place, Location):
-        return place
-    if isinstance(place, tuple):
-        return Location(float(place[0]), float(place[1]))
-    location = routing.geocode(place)
-    if location is None:
-        raise ValueError(f"Address not found: {place!r}")
-    return location
+def compare_modes(best: dict | None, transit: TransitOption, parking_hours: float, priority: str) -> ModeComparison:
+    """Compare car and public transport.
+
+    Args:
+        best: Rank 1 of the ranking (``parking_score.best_garage``), None = no garage.
+        transit: Output of ``transit_option``.
+        parking_hours: Length of stay in hours.
+        priority: Key of ``config.MODE_WEIGHTS``.
+    """
+    car = car_option(best, parking_hours)
+    return ModeComparison(car=car, transit=transit, recommendation=decide(car, transit, priority))
 
 
-def _transit_place(original: Place, resolved: Location) -> Place:
-    """Station names go to the transit API as typed (it knows them better); else coordinates."""
-    if isinstance(original, str) and parse_coordinates(original) is None:
-        return original
-    return resolved
+def savings(comparison: ModeComparison) -> dict[str, float] | None:
+    """What the recommended mode saves compared to the other one (negative = it is worse).
 
-
-def _aware(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=_TZ) if dt.tzinfo is None else dt
+    Returns:
+        ``minutes``, ``chf`` and ``percent`` (time difference / longer travel
+        time), or ``None`` without a recommendation.
+    """
+    winner = comparison["recommendation"]
+    if winner is None:
+        return None
+    best, other = comparison[winner], comparison["transit" if winner == "car" else "car"]
+    minutes = other["total_min"] - best["total_min"]
+    longer = max(other["total_min"], best["total_min"])
+    return {
+        "minutes": minutes,
+        "chf": round(other["cost_chf"] - best["cost_chf"], 2),
+        "percent": round(minutes / longer * 100) if longer else 0,
+    }

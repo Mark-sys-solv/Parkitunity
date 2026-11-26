@@ -7,6 +7,7 @@ from typing import TypedDict
 
 import streamlit as st
 
+from src import config
 from src.models import Location
 from src.ui import backend
 
@@ -15,12 +16,17 @@ MAX_PRICE_CHF = 8.0
 
 
 class TripInputs(TypedDict):
+    """Everything the user entered."""
+
     origin_query: str  # text typed as start point
     destination_query: str  # text typed as destination
     origin: Location | None  # geocoded start point (None = not found / empty)
     destination: Location | None  # geocoded destination (None = not found / empty)
     departure_time: datetime  # when the trip starts; timezone-aware, Europe/Zurich
     max_price_chf: float
+    max_walk_min: int  # longest acceptable walk from the garage to the destination
+    parking_hours: float  # length of stay
+    enough_spots: int  # more free spots than this make no difference
     show_transit: bool
 
 
@@ -56,6 +62,30 @@ def render_sidebar() -> TripInputs:
         if backend.prices_are_placeholders():
             st.caption("Preise sind vorläufige Platzhalter.")
 
+        low, high, step = config.PARKING_HOURS_RANGE
+        parking_hours = st.slider(
+            "Parkdauer", min_value=low, max_value=high, value=config.DEFAULT_PARKING_HOURS, step=step, format="%.1f h"
+        )
+        low, high, step = config.MAX_WALK_RANGE
+        max_walk = st.slider(
+            "Max. Fussweg zum Ziel",
+            min_value=low,
+            max_value=high,
+            value=config.DEFAULT_MAX_WALK_MIN,
+            step=step,
+            format="%d min",
+            help="Parkhäuser mit längerem Fussweg kommen ans Ende der Rangliste.",
+        )
+        low, high, step = config.ENOUGH_SPOTS_RANGE
+        enough_spots = st.slider(
+            "So viele freie Plätze reichen mir",
+            min_value=low,
+            max_value=high,
+            value=config.DEFAULT_ENOUGH_SPOTS,
+            step=step,
+            help="Noch mehr freie Plätze verbessern die Bewertung eines Parkhauses nicht.",
+        )
+
         st.subheader("Vergleich")
         show_transit = st.toggle("ÖV-Vergleich anzeigen", value=True)
 
@@ -66,6 +96,9 @@ def render_sidebar() -> TripInputs:
         destination=destination,
         departure_time=departure,
         max_price_chf=max_price,
+        max_walk_min=max_walk,
+        enough_spots=enough_spots,
+        parking_hours=parking_hours,
         show_transit=show_transit,
     )
 

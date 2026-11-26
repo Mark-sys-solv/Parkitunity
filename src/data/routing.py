@@ -19,6 +19,8 @@ import math
 from collections.abc import Callable
 from typing import Protocol
 
+import numpy as np
+
 from src.config import (
     AVG_CITY_SPEED_KMH,
     ROAD_FACTOR,
@@ -40,22 +42,27 @@ EARTH_RADIUS_KM = 6371.0
 class RoutingProvider(Protocol):
     """Interface every routing backend must implement."""
 
-    def drive_distance_km(self, origin: Coordinates, destination: Coordinates) -> float: ...
+    def drive_distance_km(self, origin: Coordinates, destination: Coordinates) -> float:
+        """Length of the drive in km."""
 
-    def drive_time_min(self, origin: Coordinates, destination: Coordinates) -> float: ...
+    def drive_time_min(self, origin: Coordinates, destination: Coordinates) -> float:
+        """Duration of the drive in minutes."""
 
 
 class HaversineProvider:
     """Estimate driving from straight-line distance (no API, no traffic)."""
 
     def __init__(self, road_factor: float = ROAD_FACTOR, speed_kmh: float = AVG_CITY_SPEED_KMH) -> None:
+        """Remember the road factor and the average speed."""
         self.road_factor = road_factor
         self.speed_kmh = speed_kmh
 
     def drive_distance_km(self, origin: Coordinates, destination: Coordinates) -> float:
+        """Straight line x road factor."""
         return haversine_km(origin, destination) * self.road_factor
 
     def drive_time_min(self, origin: Coordinates, destination: Coordinates) -> float:
+        """Distance divided by the average speed."""
         return self.drive_distance_km(origin, destination) / self.speed_kmh * 60
 
 
@@ -110,25 +117,22 @@ def get_drive_distance_km(origin: Point, destination: Point) -> float:
         return _FALLBACK.drive_distance_km(a, b)
 
 
-def get_walking_time(origin: Point, destination: Point) -> float:
-    """Estimated walking time in minutes (e.g. garage -> destination).
+def get_walking_time(origin: Point, destination: Point) -> int:
+    """Estimated walking time in whole minutes, rounded up (e.g. garage -> destination).
 
     Straight-line distance × ``WALKING_DETOUR_FACTOR`` at ``WALKING_SPEED_KMH`` (config).
     """
-    # TODO: use routing API footpaths instead of straight line.
-    return haversine_km(origin, destination) * WALKING_DETOUR_FACTOR / WALKING_SPEED_KMH * 60
+    minutes = haversine_km(origin, destination) * WALKING_DETOUR_FACTOR / WALKING_SPEED_KMH * 60
+    return math.ceil(minutes)
 
 
 def haversine_km(a: Point, b: Point) -> float:
     """Straight-line (great-circle) distance between two points in km."""
     (lat1, lon1), (lat2, lon2) = _to_coords(a), _to_coords(b)
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    h = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-    )
-    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(h))
+    dlat, dlon = np.radians(lat2 - lat1), np.radians(lon2 - lon1)
+    # Haversine formula: distance on a sphere.
+    h = np.sin(dlat / 2) ** 2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon / 2) ** 2
+    return float(2 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(h)))
 
 
 def geocode(address: str) -> Location | None:
@@ -148,6 +152,7 @@ def geocode(address: str) -> Location | None:
 
 
 def _to_coords(point: Point) -> Coordinates:
+    """(lat, lon) of a Location or tuple."""
     if isinstance(point, Location):
         return (point.lat, point.lon)
     lat, lon = point

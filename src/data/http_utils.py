@@ -84,10 +84,12 @@ def ttl_cache(seconds: float) -> Callable[[F], F]:
     """
 
     def decorator(func: F) -> F:
+        """Wrap ``func`` with its own cache."""
         cache: dict[Any, tuple[float, Any]] = {}
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """Return the cached result, or call the function."""
             key = (args, tuple(sorted(kwargs.items())))
             now = _now()
             hit = cache.get(key)

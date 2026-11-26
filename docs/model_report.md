@@ -1,42 +1,48 @@
-# Occupancy model – evaluation
+# Occupancy model - evaluation
 
-> ⚠️ **Trained on SYNTHETIC data** – for development only, not real results.
+- Target: free spaces **60 min** ahead, per garage (regression)
+- Data: real, 37 garages, one row per garage per 15 minutes
+- Features: free, hour, weekday, garage_id, capacity
+- Split by time (no shuffling):
+  - Train: 2025-11-22 to 2026-10-25, 833,064 rows
+  - Validation: 2026-10-25 to 2026-11-08, 49,580 rows
+  - Test: 2026-11-08 to 2026-11-22, 46,309 rows
+- Trained: 2026-11-25T15:08:24+00:00
 
-- Target: free spots **30 min** ahead, per garage
-- Data: synthetic (2026-10-04 – 2026-11-22, 154,201 rows, 34 garages)
-- Test set: last 20% of the period (time-based split)
-- Best model: **Random Forest** (refit on all data and saved)
-- Trained: 2026-11-22T11:51:28+00:00
+## Comparison on the validation set (MAE in spaces, lower is better)
 
-## Metrics on the test set (in free spots, lower is better)
+| Model | Train MAE | Validation MAE |
+|---|---:|---:|
+| k-NN (k=20) | 4.74 | 7.76 |
+| k-NN (k=5) | 4.02 | 7.99 |
+| Random forest (depth 12) | 5.88 | 8.34 |
+| Decision tree (depth 12) | 6.30 | 8.87 |
+| Gradient boosting | 8.73 | 10.29 |
+| Random forest (depth 8) | 8.26 | 10.52 |
+| Decision tree (depth 8) | 8.61 | 10.97 |
+| Linear regression | 9.85 | 11.50 |
+| Decision tree (depth 5) | 11.41 | 13.09 |
+| Baseline: same as now | 8.72 | 10.50 |
 
-| Model | MAE | RMSE | MAE vs. baseline |
-|---|---:|---:|---:|
-| Random Forest | 7.03 | 15.70 | -71% |
-| Gradient Boosting | 7.35 | 14.22 | -70% |
-| Baseline: stays the same | 10.16 | 22.90 | -58% |
-| Baseline: same time last week | 24.45 | 78.62 | +0% |
+## Final result on the test set (used once, best model only)
+
+| | Test MAE |
+|---|---:|
+| **k-NN (k=20)** | **7.24** |
+| Baseline: same as now | 9.98 |
+
+The model is off by 7.2 spaces on average, the baseline by 10.0.
 
 ## Feature importance
 
-Permutation importance on the test set: how much larger the MAE gets (in free spots)
-when a feature's values are shuffled, i.e. when the model can no longer use it.
-Features that do not vary in the test period (e.g. no holiday in it) show 0.
+How much larger the MAE gets on the validation set when a feature is shuffled.
 
 ![Feature importance](feature_importance.svg)
 
 | Feature | Extra MAE when shuffled |
 |---|---:|
-| Free spots now | +204 |
-| Free spots 15 min ago | +42 |
-| Mean of last hour | +15 |
-| Same time last week | +10 |
-| Free spots 1 h ago | +8.9 |
-| Occupancy rate now | +2.8 |
-| Hour of day | +0.90 |
-| Capacity | +0.52 |
-| Garage | +0.08 |
-| Weekday | +0.02 |
-| Weekend | +0.01 |
-| Public holiday | +0.00 |
-| Month | +0.00 |
+| Free spaces now | +109 |
+| Capacity | +31 |
+| Hour of day | +8.6 |
+| Garage | +8.0 |
+| Weekday | +2.2 |

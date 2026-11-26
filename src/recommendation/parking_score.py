@@ -1,131 +1,85 @@
-"""Rank parking garages for a trip.
+# AI citation: this file was written with Claude (Anthropic).
+"""Rank parking garages by what matters to the driver (pure functions, no Streamlit).
 
-For every garage we estimate the whole trip as seen by the driver:
-
-    depart ──drive──▶ garage ──search──▶ park ──walk──▶ destination
-
-- drive:  ``routing.get_drive_time(origin, garage)`` (0 if no origin is given)
-- free:   ``predict(garage, departure + drive)`` – free spots when you get there
-- search: extra minutes when few spots are free (``search_penalty``)
-- walk:   straight line from the garage to the destination (``routing.get_walking_time``)
-
-Full garages (0 predicted free spots) and garages above ``max_price`` are
-dropped; the rest is sorted by a score combining total time, availability and
-price. All assumptions live in ``src/config.py``.
+Every criterion is scaled to 0 (worst garage) ... 1 (best garage) and the
+score is the weighted sum. The weights per priority are in ``config.PRIORITY_WEIGHTS``.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import pandas as pd
 
 from src import config
-from src.data import parking_api, routing
-from src.ml.predict import predict
-from src.models import Garage, Location
 
 
-def search_penalty(predicted_free: int) -> float:
-    """Extra minutes needed to find a spot.
+def normalise(values: pd.Series, more_is_better: bool, reference: pd.Series) -> pd.Series:
+    """Min-max normalisation: best value = 1, worst value = 0.
 
-    0 with more than ``SEARCH_PENALTY_HIGH_FREE`` free spots, the maximum with
-    ``SEARCH_PENALTY_LOW_FREE`` or fewer, linear in between.
+    Args:
+        values: The numbers to scale.
+        more_is_better: False if a small number is good (e.g. the price).
+        reference: The scale goes from the smallest to the largest of these
+            values. Values outside of it get 0 or 1.
+
+    If all reference values are equal, the criterion cannot tell the garages
+    apart: everyone gets 1 (and we avoid dividing by 0).
     """
-    low, high = config.SEARCH_PENALTY_LOW_FREE, config.SEARCH_PENALTY_HIGH_FREE
-    if predicted_free >= high:
-        return 0.0
-    if predicted_free <= low:
-        return config.SEARCH_PENALTY_MAX_MIN
-    return config.SEARCH_PENALTY_MAX_MIN * (high - predicted_free) / (high - low)
-
-
-def score_parts(total_min: float, predicted_free: int, hourly_rate_chf: float | None) -> dict[str, float]:
-    """The three sub-scores in [0, 1] (higher is better).
-
-    Absolute scales (see config) keep a garage's score independent of the
-    other garages in the list.
-    """
-    rate = config.ASSUMED_RATE_IF_UNKNOWN_CHF_PER_H if hourly_rate_chf is None else hourly_rate_chf
-    return {
-        "time": max(0.0, 1 - total_min / config.SCORE_TIME_WORST_MIN),
-        "availability": min(predicted_free / config.SCORE_FREE_SATURATION, 1.0),
-        "price": max(0.0, 1 - rate / config.SCORE_PRICE_WORST_CHF_PER_H),
-    }
-
-
-def score_garage(total_min: float, predicted_free: int, hourly_rate_chf: float | None) -> float:
-    """Weighted sum of ``score_parts`` with ``config.SCORE_WEIGHTS`` (normalised to sum 1)."""
-    parts = score_parts(total_min, predicted_free, hourly_rate_chf)
-    return _weighted(parts)
+    spread = reference.max() - reference.min()
+    if len(reference) == 0 or spread == 0:
+        return pd.Series(1.0, index=values.index)
+    scaled = ((values - reference.min()) / spread).clip(0, 1)
+    return scaled if more_is_better else 1 - scaled
 
 
 def rank_garages(
-    destination: Location,
-    departure_time: datetime,
-    max_price: float | None = None,
-    origin: Location | None = None,
-) -> list[dict]:
-    """Return the usable garages for a trip, best first.
+    candidates: pd.DataFrame,
+    priority: str = config.DEFAULT_PRIORITY,
+    max_walk_min: int = config.DEFAULT_MAX_WALK_MIN,
+    enough_spots: int = config.DEFAULT_ENOUGH_SPOTS,
+) -> pd.DataFrame:
+    """Sort the garages, best first.
 
     Args:
-        destination: Where the driver wants to go.
-        departure_time: When the driver sets off (naive = Zurich time).
-        max_price: Drop garages whose hourly rate is above this (CHF/h).
-            Garages without a known price are kept.
-        origin: Start of the trip. Without it, drive times are 0 and the
-            prediction is made for ``departure_time``.
+        candidates: Output of ``build_candidates`` (not changed).
+        priority: Key of ``config.PRIORITY_WEIGHTS``.
+        max_walk_min: Garages with a longer walk to the destination come after the others.
+        enough_spots: More free spots than this count the same, so that one huge
+            garage does not make all others look bad.
 
     Returns:
-        One dict per garage, sorted by ``score`` (descending): ``garage``
-        (Garage), ``predicted_free`` (int, > 0), ``drive_min``, ``search_min``,
-        ``walking_min``, ``total_min`` (floats, minutes), ``arrival_at_garage``
-        (datetime), ``parking_cost_chf`` (fee for ``PARKING_DURATION_H``, or
-        None if the price is unknown), ``score`` and ``score_parts``.
-        Empty list if every garage is full or too expensive.
+        Copy of the table with the extra columns ``score`` (0 ... 1) and
+        ``rank`` (1 = best). Whatever their score, garages that are too far to
+        walk come near the end, and those with fewer than ``MIN_FREE_AT_ARRIVAL``
+        expected free spots come last.
     """
-    candidates: list[dict] = []
-    for garage in parking_api.fetch_garages():
-        rate = garage.hourly_rate_chf
-        if max_price is not None and rate is not None and rate > max_price:
-            continue
-        drive = routing.get_drive_time(origin, garage.location) if origin is not None else 0.0
-        at_garage = departure_time + timedelta(minutes=drive)
-        free = predict(garage.id, at_garage)
-        if free <= 0:
-            continue
-        walk = routing.get_walking_time(garage.location, destination)
-        search = search_penalty(free)
-        total = drive + search + walk
-        parts = score_parts(total, free, rate)
-        candidates.append(
-            {
-                "garage": garage,
-                "predicted_free": free,
-                "drive_min": drive,
-                "search_min": search,
-                "walking_min": walk,
-                "total_min": total,
-                "arrival_at_garage": at_garage,
-                "parking_cost_chf": rate * config.PARKING_DURATION_H if rate is not None else None,
-                "score": _weighted(parts),
-                "score_parts": parts,
-            }
-        )
-    # Ties: the faster garage first.
-    return sorted(candidates, key=lambda c: (-c["score"], c["total_min"]))
+    weights = config.PRIORITY_WEIGHTS[priority]
+    ranked = candidates.copy()
+    travel_min = ranked["drive_min"] + ranked["walk_min"]
+    price = ranked["price_per_hour"].fillna(config.ASSUMED_RATE_IF_UNKNOWN_CHF_PER_H)
+    spots = ranked["free_at_arrival"].clip(upper=enough_spots)
+
+    # Garages that do not really come into question; they are sorted to the end.
+    too_few = ranked["free_at_arrival"] < config.MIN_FREE_AT_ARRIVAL
+    too_far = ranked["walk_min"] > max_walk_min
+    # They must not stretch the scale either (e.g. a garage 87 minutes away).
+    suitable = ~(too_few | too_far)
+    if not suitable.any():
+        suitable[:] = True  # nothing suitable: compare all garages with each other
+
+    ranked["score"] = (
+        weights["travel"] * normalise(travel_min, False, travel_min[suitable])
+        + weights["price"] * normalise(price, False, price[suitable])
+        + weights["spots"] * normalise(spots, True, spots[suitable])
+    )
+    # Helper columns, only for sorting: too few spots last, then too far, then score, then the faster garage.
+    ranked["_too_few"], ranked["_too_far"] = too_few, too_far
+    ranked["_travel"] = travel_min
+    ranked = ranked.sort_values(["_too_few", "_too_far", "score", "_travel"], ascending=[True, True, False, True])
+    ranked = ranked.drop(columns=["_too_few", "_too_far", "_travel"]).reset_index(drop=True)
+    ranked["rank"] = range(1, len(ranked) + 1)
+    return ranked
 
 
-def best_garage(
-    destination: Location,
-    departure_time: datetime,
-    max_price: float | None = None,
-    origin: Location | None = None,
-) -> Garage | None:
-    """Convenience wrapper returning only the top-ranked garage."""
-    ranked = rank_garages(destination, departure_time, max_price, origin)
-    return ranked[0]["garage"] if ranked else None
-
-
-def _weighted(parts: dict[str, float]) -> float:
-    weights = config.SCORE_WEIGHTS
-    total_weight = sum(weights.values())
-    return sum(weights[name] * parts[name] for name in weights) / total_weight
+def best_garage(ranking: pd.DataFrame) -> dict | None:
+    """Rank 1 as a dict (``None`` if the ranking is empty)."""
+    return None if ranking.empty else ranking.iloc[0].to_dict()

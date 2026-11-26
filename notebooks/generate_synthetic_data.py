@@ -204,6 +204,7 @@ def write_db(df: pd.DataFrame, db_path: Path, seed: int) -> int:
 
 
 def main() -> None:
+    """Generate the synthetic database."""
     parser = argparse.ArgumentParser(description="Generate SYNTHETIC parking data (development only).")
     parser.add_argument("--weeks", type=int, default=8, help="weeks of data up to now (default 8)")
     parser.add_argument("--seed", type=int, default=42, help="random seed (default 42)")
